@@ -1,0 +1,9 @@
+python-telegram-bot[job-queue]==22.8
+SQLAlchemy==2.0.54
+psycopg[binary]==3.3.6
+pgvector==0.4.2
+openai==1.109.1
+pydantic==2.13.5
+pypdf==5.9.0
+python-dotenv==1.2.4
+tzdata==2026.5

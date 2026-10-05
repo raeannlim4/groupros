@@ -31,15 +31,17 @@ Webhooks for the Python bot, Telegram Mini Apps, web dashboards, contribution tr
 
 ```
 Telegram  <-- long polling -->  Python bot (Railway)  <-->  Postgres + pgvector (Supabase)
-                                      |                          ^
-                                      | HTTP webhook (optional)  | reads
-                                      v                          |
-                                 n8n (Railway)  ---- sendMessage via Telegram API
+                                                                 ^
+                                                                 | reads (SQL)
+                                                                 |
+                                 n8n (Railway)  -----------------+
+                                   |
+                                   +---- sendMessage via Telegram API
 ```
 
 - **The Python bot is the ONLY thing that receives Telegram updates.** It uses polling.
 - **n8n must never use the Telegram Trigger node.** A Telegram bot can only have one way of receiving updates; a Telegram Trigger would register a webhook and break the Python bot's polling. n8n may *send* messages with the Telegram node (that is safe).
-- n8n reads the same Postgres database for scheduled reports.
+- n8n reads the same Postgres database for scheduled reports. **Python never calls n8n**; there are no webhooks between them.
 - Inline buttons in any message (even ones sent by n8n) are handled by the Python bot. Callback data format: `action:id`, e.g. `cap_add:42`. Max 64 bytes.
 
 ## 3. Tech stack (fixed — do not substitute)
@@ -55,7 +57,7 @@ Telegram  <-- long polling -->  Python bot (Railway)  <-->  Postgres + pgvector 
 - The `openai` Python SDK for **both** chat and embeddings, used as a generic client for any OpenAI-compatible API. Always construct clients with `base_url` and `api_key` from env vars (`LLM_BASE_URL`/`LLM_API_KEY` for chat, `EMBEDDING_BASE_URL`/`EMBEDDING_API_KEY` for embeddings) so I can switch providers without code changes. Never hardcode a provider, model name or URL. Do not use provider-specific features (only `chat.completions.create` and `embeddings.create`).
 - For JSON outputs, instruct the model in the prompt to return JSON only, then strip any ``` fences before parsing and validate with pydantic. Do not rely on provider-specific structured-output modes.
 - `pydantic` v2 to validate all LLM JSON output.
-- `httpx` for calling n8n webhooks. `pypdf` for PDF text (stretch phase only).
+- `pypdf` for PDF text (stretch phase only).
 - `python-dotenv`, `zoneinfo`.
 
 ## 4. Configuration
@@ -81,8 +83,6 @@ EMBEDDING_MODEL=
 # Must match the embedding model's output size
 EMBEDDING_DIM=
 DEFAULT_TZ=Asia/Singapore
-N8N_WEBHOOK_BASE=
-N8N_SHARED_SECRET=
 PRIVACY_URL=
 LOG_LEVEL=INFO
 ```
@@ -195,23 +195,29 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 
 The weekly report is an n8n workflow. Python's only job is to make the data easy to query. Do not build the weekly report in Python. Make sure table and column names match section 6 exactly, because the n8n SQL depends on them.
 
-## 9. Behaviour rules
+## 9. Display formats
+- All user-facing dates are shown in `DEFAULT_TZ`. Absolute format: `Thu 9 Oct, 11:59pm` (no year unless it differs from the current year; no leading zero on the day or hour; lowercase am/pm).
+- Relative phrasing in reminders: "today 11:59pm", "tomorrow 11:59pm", "in 3 hours" (under 12 hours away), otherwise the absolute format.
+- Reminders are only ever sent by DM. If the owner can't receive DMs, the group gets only the one-time enable nudge, never the reminder itself.
+
+## 10. Behaviour rules
 - The bot speaks in the group only for: capture prompts, command replies, onboarding, the one-time DM nudge, and optional extension notices.
 - All LLM calls go through `llm.py` / `embeddings.py`, with timeouts and exception handling. Commands reply "Sorry, something went wrong, try again." on failure; background jobs log and continue.
 - Global error handler logs exceptions. Use `logging`, not `print`.
 
-## 10. Testing and evaluation
+## 11. Testing and evaluation
 - Unit tests: time conversion/display, link building, chunk grouping logic.
+- Scripts are run from the repo root as modules, e.g. `python -m scripts.eval_capture`. `scripts/` has an `__init__.py`. No `sys.path` hacks and no `pyproject.toml`.
 - `scripts/eval_capture.py`: ~30 labelled messages (commitments, requests to others, questions, jokes, Singlish). Prints precision and recall.
 - `scripts/eval_ask.py`: ~10 question/expected-message-id pairs against seeded data. Prints how often the correct message was retrieved in the top 6, and how often the answer cited it.
 - `scripts/seed_demo.py`: loads a JSON transcript (`{name, text, sent_at}`) into Message for a chat id, with fake Users and negative telegram_message_ids (no links for these).
 
-## 11. Deployment (Railway)
+## 12. Deployment (Railway)
 - Start command: `python -m bot.main`.
 - Only one instance may poll at a time. README must say to stop the local bot when the Railway bot is running (or use a separate dev bot token locally).
 - Pin dependency versions.
 
-## 12. How to work with me
+## 13. How to work with me
 - Build in the phases below. **Stop after each phase**, summarise in a few lines, and tell me exactly how to test it in Telegram. Wait for me before continuing.
 - No features, files or dependencies beyond this spec without asking.
 - When changing existing code, list changed files and why.
