@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from bot import config
-from bot.models import Base, Chat, User
+from bot.models import Base, Chat, ChatMember, User
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,21 @@ def get_or_create_chat(
     elif title and chat.title != title:
         chat.title = title
     return chat
+
+
+def get_or_create_chat_member(
+    session: Session, chat_id: int, user_id: int
+) -> ChatMember:
+    member = session.scalar(
+        select(ChatMember).where(
+            ChatMember.chat_id == chat_id, ChatMember.user_id == user_id
+        )
+    )
+    if member is None:
+        member = ChatMember(chat_id=chat_id, user_id=user_id)
+        session.add(member)
+        session.flush()
+    return member
 
 
 def get_or_create_user(
