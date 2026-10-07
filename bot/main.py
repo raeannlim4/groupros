@@ -44,9 +44,16 @@ def main() -> None:
     application.add_handler(CommandHandler("start", onboarding.start))
     application.add_handler(CommandHandler("help", onboarding.help_command))
     application.add_handler(CommandHandler("tasks", tasks.task_board))
+    application.add_handler(CommandHandler("mytasks", tasks.my_tasks))
     application.add_handler(CommandHandler("decide", decisions.decide))
+    application.add_handler(CommandHandler("decisions", decisions.decisions))
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, onboarding.bot_added)
+    )
+    application.add_handler(
+        MessageHandler(
+            filters.StatusUpdate.NEW_CHAT_TITLE, onboarding.chat_title_changed
+        )
     )
     application.add_handler(
         MessageHandler(
@@ -66,9 +73,23 @@ def main() -> None:
     )
     application.add_handler(
         CallbackQueryHandler(
+            tasks.handle_mytasks_callback, pattern=r"^mytask_done:"
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            decisions.handle_decision_callback, pattern=r"^dec_rm:"
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
             reminders.handle_reminder_callback,
             pattern=r"^(rem_ontrack|rem_more|rem_pick|rem_day|rem_plus1|rem_plus2|rem_plus7|rem_tell_yes|rem_tell_no):",
         )
+    )
+    application.add_handler(
+        MessageHandler(filters.ChatType.GROUPS, onboarding.refresh_chat_title),
+        group=1,
     )
     if application.job_queue is not None:
         application.job_queue.run_repeating(

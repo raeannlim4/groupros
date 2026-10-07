@@ -6,12 +6,12 @@ from datetime import timedelta
 
 from sqlalchemy import select
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ParseMode
+from telegram.constants import ChatType, ParseMode
 from telegram.ext import ContextTypes
 
 from bot.db import SessionLocal, get_or_create_chat, get_or_create_user
 from bot.handlers.reminders import create_reminders
-from bot.models import Task, User
+from bot.models import Chat, Task, User
 from bot.timeutil import format_absolute, now_utc
 
 logger = logging.getLogger(__name__)
@@ -224,4 +224,139 @@ async def handle_task_callback(
         )
     except Exception:
         logger.exception("Failed to refresh task board")
+    await query.answer()
+
+
+def build_my_tasks(telegram_user_id: int):
+    with SessionLocal() as session:
+        db_user = session.scalar(
+            select(User).where(User.telegram_user_id == telegram_user_id)
+        )
+        if db_user is None:
+            return "You have no open tasks.", None
+
+        tasks = list(
+            session.scalars(
+                select(Task).where(
+                    Task.owner_user_id == db_user.id, Task.status == "open"
+                )
+            )
+        )
+        if not tasks:
+            return "You have no open tasks.", None
+
+        grouped: dict[int, list[Task]] = {}
+        for task in tasks:
+            grouped.setdefault(task.chat_id, []).append(task)
+
+        chats = {
+            chat.id: chat
+            for chat in session.scalars(
+                select(Chat).where(Chat.id.in_(grouped.keys()))
+            )
+        }
+
+        entries: list[tuple[str, Task | None]] = []
+        first_group = True
+        for chat_id in sorted(
+            grouped,
+            key=lambda cid: (chats[cid].title or "").lower() if cid in chats else "",
+        ):
+            if not first_group:
+                entries.append(("", None))
+            first_group = False
+            chat = chats.get(chat_id)
+            title = _escape(chat.title) if chat and chat.title else "Group"
+            entries.append((f"<b>{title}</b>", None))
+            ordered = sorted(
+                grouped[chat_id],
+                key=lambda t: (t.due_at is None, t.due_at or t.created_at),
+            )
+            for task in ordered:
+                due = (
+                    f" (due {format_absolute(task.due_at)})" if task.due_at else ""
+                )
+                entries.append((f"• {_escape(task.title)}{due}", task))
+
+        lines: list[str] = []
+        rows: list[list[InlineKeyboardButton]] = []
+        for index, (line, task) in enumerate(entries):
+            if lines and len("\n".join(lines + [line])) > BOARD_LIMIT:
+                remaining = sum(
+                    1
+                    for _, remaining_task in entries[index:]
+                    if remaining_task is not None
+                )
+                if remaining:
+                    lines.append(f"…and {remaining} more")
+                break
+            lines.append(line)
+            if task is not None:
+                rows.append(
+                    [
+                        InlineKeyboardButton(
+                            f"✅ {_short(task.title)}",
+                            callback_data=f"mytask_done:{task.id}",
+                        )
+                    ]
+                )
+
+        text = "\n".join(lines) if lines else "You have no open tasks."
+        keyboard = InlineKeyboardMarkup(rows) if rows else None
+        return text, keyboard
+
+
+async def my_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+    if message is None or chat is None or user is None:
+        return
+
+    if chat.type != ChatType.PRIVATE:
+        await message.reply_text(
+            "Send /mytasks to me privately to see tasks across all your groups."
+        )
+        return
+
+    text, keyboard = build_my_tasks(user.id)
+    await message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+
+async def handle_mytasks_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+
+    _, _, raw_id = query.data.partition(":")
+    try:
+        task_id = int(raw_id)
+    except ValueError:
+        await query.answer()
+        return
+
+    user = query.from_user
+    now = now_utc()
+    with SessionLocal() as session:
+        task = session.get(Task, task_id)
+        if task is None or task.status != "open":
+            await query.answer("This task is no longer open.")
+            return
+        owner = session.get(User, task.owner_user_id) if task.owner_user_id else None
+        if owner is None or owner.telegram_user_id != user.id:
+            await query.answer("Only the owner can complete this.", show_alert=True)
+            return
+        task.status = "done"
+        task.completed_at = now
+        session.commit()
+
+    text, keyboard = build_my_tasks(user.id)
+    try:
+        await query.edit_message_text(
+            text, reply_markup=keyboard, parse_mode=ParseMode.HTML
+        )
+    except Exception:
+        logger.exception("Failed to refresh /mytasks")
     await query.answer()

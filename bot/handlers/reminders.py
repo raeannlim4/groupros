@@ -106,7 +106,8 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def _send_reminder(context, session, reminder, task, owner, chat, now) -> None:
-    text = f'Hi! "{_escape(task.title)}" is due {format_relative(task.due_at, now)}.'
+    group = _escape(chat.title) if chat.title else "this group"
+    text = f'⏰ [{group}] "{_escape(task.title)}" is due {format_relative(task.due_at, now)}.'
     keyboard = InlineKeyboardMarkup(
         [
             [
@@ -211,7 +212,9 @@ async def _apply_new_deadline(query, task_id: int, new_due) -> None:
             return
         task.due_at = new_due
         create_reminders(session, task)
+        chat = session.get(Chat, task.chat_id)
         session.commit()
+        group = _escape(chat.title) if chat is not None and chat.title else "the group"
     keyboard = InlineKeyboardMarkup(
         [
             [
@@ -225,8 +228,10 @@ async def _apply_new_deadline(query, task_id: int, new_due) -> None:
         ]
     )
     await query.edit_message_text(
-        f"Now due {format_absolute(new_due)}.\nTell the group?",
+        f"Now due {format_absolute(new_due)}.\n"
+        f"Tell {group} about the new deadline?",
         reply_markup=keyboard,
+        parse_mode=ParseMode.HTML,
     )
     await query.answer()
 

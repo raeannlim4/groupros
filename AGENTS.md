@@ -133,6 +133,7 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 
 ### 7.1 Onboarding
 - **Bot added to group**: post one intro message: what it does, what it stores (group text messages, tasks, decisions), that messages are processed by AI providers, and that `/forget` deletes your data. Buttons: "Enable private reminders" → `https://t.me/<bot_username>?start=enable`, and "Privacy info" → `PRIVACY_URL` if set.
+- **Group title**: keep `Chat.title` current — update it whenever the bot sees a message in that group and when Telegram sends a group-title-changed event.
 - **`/start` in private**: set `can_dm=True`, short welcome.
 - **`/forget`**: confirm with a button, then delete the user's Message rows, delete every MessageChunk whose range included any of their messages, and set `chunked=False` on remaining messages in those ranges so they get re-chunked. Reply privately if possible.
 - **`/help`**: list commands briefly.
@@ -154,20 +155,22 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 - `/tasks` groups open tasks: **Overdue**, **Due in 48h**, **Later**, **No deadline**, **Unclaimed**, then last 5 **Done**. Line format: `• <task> — <Name> (due <date>)`.
 - Buttons: `✅ <short title>` per open task (owner only), and `🙋 Claim: <short title>` per unclaimed task (anyone; claiming sets owner and creates reminders). Refresh the board in place after any tap.
 - Stay under 4096 characters; truncate with "…and N more".
+- `/mytasks`: in private, list the user's open tasks across all their groups, each group's tasks under a bold group-title header, sorted by due date within the group, each task with a `✅` button to mark it done. In a group, reply "Send /mytasks to me privately to see tasks across all your groups."
 
 ### 7.4 Decisions
 - `/decide <text>` stores a Decision and replies `📝 Logged: <text>`. Without text, show usage.
+- `/decisions`: show the latest 10 decisions for this group, newest first, each line `• <text> — <name>, <date>` with a link to the original `/decide` message when `links.message_link` returns one (skip the link otherwise). A `🗑` button per decision (short label) lets only the person who logged it delete it; others get an alert. Deleting refreshes the list in place. If there are none, reply "No decisions logged yet. Use /decide <text> to log one."
 - Decisions are included in `/ask` context, `/catchup` and the weekly report.
 
 ### 7.5 Reminders
 - When a task becomes `open` with a due date: create Reminders at **due − 24h** and **due − 3h**, skipping past times.
-- `job_queue.run_repeating(..., interval=60)`: find reminders with `remind_at <= now`, `sent_at IS NULL`, task `open`. DM the owner: `Hi! "<task>" is due <relative time>.` with `[👍 On track] [⏰ Need more time]`. Set `sent_at`.
+- `job_queue.run_repeating(..., interval=60)`: find reminders with `remind_at <= now`, `sent_at IS NULL`, task `open`. DM the owner: `⏰ [<group title>] "<task>" is due <relative time>.` (group title from the task's chat) with `[👍 On track] [⏰ Need more time]`. Set `sent_at`.
 - DM fails with `telegram.error.Forbidden` → set `can_dm=False`, mark reminder sent; if `nudged_for_dm` is False, post once in the group: `@<name>, tap below to get private deadline reminders` with the enable button, then set `nudged_for_dm=True`. Never mention the task in the group.
 - **On track** → edit to "Great, good luck!"
 - **Need more time** → show `[+1 day] [+2 days] [+1 week]` and `[📅 Pick a day]`.
   - **Pick a day** shows the next 7 days as buttons labelled like `Fri 9 Oct` (2 per row), plus `[← Back]`. Choosing a day sets the deadline to 11:59pm that day in `DEFAULT_TZ`.
   - Options whose new deadline would not be later than the current deadline are hidden/skipped.
-  - After choosing, delete unsent reminders, create new ones, then ask `Tell the group? [Yes] [Keep private]`. If yes, post neutrally: `🗓 Updated: "<task>" is now due <date>.`
+  - After choosing, delete unsent reminders, create new ones, then ask `Tell <group title> about the new deadline? [Yes] [Keep private]`. If yes, post neutrally to the task's own group: `🗓 Updated: "<task>" is now due <date>.`
   - Callback data stays under 64 bytes, e.g. the picked day is `rem_day:<task_id>:<YYYY-MM-DD>`.
 
 ### 7.6 RAG ingestion (`rag/chunker.py`)
@@ -241,3 +244,4 @@ The weekly report is an n8n workflow. Python's only job is to make the data easy
 (Ideas go here first. Only build after the current phase works and is committed.)
 
 - Edit task title/deadline from the board (owner only). Revisit after Phase 6.
+- `/setname` for custom group nicknames.

@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 HELP_TEXT = (
     "Here is what I can do:\n"
     "/tasks – who is doing what and what is due\n"
+    "/mytasks – your open tasks across all your groups\n"
     "/decide <text> – log a group decision\n"
+    "/decisions – show recent group decisions\n"
     "/ask <question> – ask about past discussion\n"
     "/catchup – catch up on what you missed\n"
     "/forget – delete your data\n"
@@ -97,3 +99,27 @@ async def bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await message.reply_text(INTRO_TEXT, parse_mode=ParseMode.HTML, **kwargs)
     logger.info("Added to chat %s (%s).", chat.id, chat.title)
+
+
+async def refresh_chat_title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat = update.effective_chat
+    if chat is None or chat.title is None:
+        return
+    if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+        return
+    with SessionLocal() as session:
+        get_or_create_chat(session, chat.id, chat.title)
+        session.commit()
+
+
+async def chat_title_changed(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    message = update.effective_message
+    chat = update.effective_chat
+    if message is None or chat is None or not message.new_chat_title:
+        return
+    with SessionLocal() as session:
+        get_or_create_chat(session, chat.id, message.new_chat_title)
+        session.commit()
+    logger.info("Chat title updated: %s -> %s", chat.id, message.new_chat_title)
