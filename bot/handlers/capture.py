@@ -16,6 +16,7 @@ from bot.db import (
     get_or_create_chat_member,
     get_or_create_user,
 )
+from bot.handlers.reminders import create_reminders
 from bot.llm import classify_commitment
 from bot.models import Message, Task, User
 from bot.timeutil import format_absolute, now_utc
@@ -154,6 +155,7 @@ async def handle_capture_callback(
             task = session.get(Task, task_id)
             if task is not None:
                 task.status = "open"
+                create_reminders(session, task)
                 session.commit()
         due_text = f", due {format_absolute(task_due)}" if task_due else ""
         await query.edit_message_text(

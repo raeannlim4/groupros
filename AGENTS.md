@@ -164,7 +164,11 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 - `job_queue.run_repeating(..., interval=60)`: find reminders with `remind_at <= now`, `sent_at IS NULL`, task `open`. DM the owner: `Hi! "<task>" is due <relative time>.` with `[👍 On track] [⏰ Need more time]`. Set `sent_at`.
 - DM fails with `telegram.error.Forbidden` → set `can_dm=False`, mark reminder sent; if `nudged_for_dm` is False, post once in the group: `@<name>, tap below to get private deadline reminders` with the enable button, then set `nudged_for_dm=True`. Never mention the task in the group.
 - **On track** → edit to "Great, good luck!"
-- **Need more time** → `[+1 day] [+2 days]` → move due_at, delete unsent reminders, create new ones → `Tell the group? [Yes] [Keep private]`. If yes, post neutrally: `🗓 Updated: "<task>" is now due <date>.`
+- **Need more time** → show `[+1 day] [+2 days] [+1 week]` and `[📅 Pick a day]`.
+  - **Pick a day** shows the next 7 days as buttons labelled like `Fri 9 Oct` (2 per row), plus `[← Back]`. Choosing a day sets the deadline to 11:59pm that day in `DEFAULT_TZ`.
+  - Options whose new deadline would not be later than the current deadline are hidden/skipped.
+  - After choosing, delete unsent reminders, create new ones, then ask `Tell the group? [Yes] [Keep private]`. If yes, post neutrally: `🗓 Updated: "<task>" is now due <date>.`
+  - Callback data stays under 64 bytes, e.g. the picked day is `rem_day:<task_id>:<YYYY-MM-DD>`.
 
 ### 7.6 RAG ingestion (`rag/chunker.py`)
 - Repeating job every 120 seconds. For each chat, take messages with `chunked=False` in order.
@@ -235,3 +239,5 @@ The weekly report is an n8n workflow. Python's only job is to make the data easy
 
 ## Parking lot
 (Ideas go here first. Only build after the current phase works and is committed.)
+
+- Edit task title/deadline from the board (owner only). Revisit after Phase 6.

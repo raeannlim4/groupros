@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from zoneinfo import ZoneInfo
 
@@ -32,6 +32,29 @@ def format_absolute(dt: datetime, now: datetime | None = None) -> str:
     hour = local.hour % 12 or 12
     ampm = "am" if local.hour < 12 else "pm"
     return f"{date_part}, {hour}:{local.minute:02d}{ampm}"
+
+
+def _time_only(local: datetime) -> str:
+    hour = local.hour % 12 or 12
+    ampm = "am" if local.hour < 12 else "pm"
+    return f"{hour}:{local.minute:02d}{ampm}"
+
+
+def format_relative(dt: datetime, now: datetime | None = None) -> str:
+    """Phrase a deadline relative to now, e.g. 'in 3 hours', 'today 11:59pm'."""
+    local = to_local(dt)
+    reference = to_local(now) if now is not None else to_local(now_utc())
+    seconds = (local - reference).total_seconds()
+    if seconds <= 0:
+        return "now"
+    if seconds < 12 * 3600:
+        hours = max(1, round(seconds / 3600))
+        return f"in {hours} hour{'s' if hours != 1 else ''}"
+    if local.date() == reference.date():
+        return f"today {_time_only(local)}"
+    if local.date() == (reference + timedelta(days=1)).date():
+        return f"tomorrow {_time_only(local)}"
+    return format_absolute(local, now=reference)
 
 
 def format_for_llm(dt: datetime | None = None) -> str:

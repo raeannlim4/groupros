@@ -14,7 +14,7 @@ from telegram.ext import (
 
 from bot import config
 from bot.db import init_db
-from bot.handlers import capture, onboarding
+from bot.handlers import capture, decisions, onboarding, reminders, tasks
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL.upper(), logging.INFO),
@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 async def post_init(application: Application) -> None:
     init_db()
+    reminders.backfill_reminders()
     me = await application.bot.get_me()
     logger.info("Polling as @%s", me.username)
 
@@ -42,6 +43,8 @@ def main() -> None:
     )
     application.add_handler(CommandHandler("start", onboarding.start))
     application.add_handler(CommandHandler("help", onboarding.help_command))
+    application.add_handler(CommandHandler("tasks", tasks.task_board))
+    application.add_handler(CommandHandler("decide", decisions.decide))
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, onboarding.bot_added)
     )
@@ -56,6 +59,21 @@ def main() -> None:
             capture.handle_capture_callback, pattern=r"^(cap_add|cap_no):"
         )
     )
+    application.add_handler(
+        CallbackQueryHandler(
+            tasks.handle_task_callback, pattern=r"^(task_done|task_claim):"
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            reminders.handle_reminder_callback,
+            pattern=r"^(rem_ontrack|rem_more|rem_pick|rem_day|rem_plus1|rem_plus2|rem_plus7|rem_tell_yes|rem_tell_no):",
+        )
+    )
+    if application.job_queue is not None:
+        application.job_queue.run_repeating(
+            reminders.reminder_job, interval=60, first=15
+        )
     application.add_error_handler(error_handler)
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
