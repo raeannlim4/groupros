@@ -101,6 +101,9 @@ class Task(Base):
     title: Mapped[str] = mapped_column(Text)
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    source: Mapped[str] = mapped_column(
+        String(16), default="ai", server_default="ai"
+    )
     source_message_id: Mapped[int | None] = mapped_column(BigInteger)
     confirm_message_id: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(

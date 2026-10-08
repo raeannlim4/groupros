@@ -44,6 +44,7 @@ def main() -> None:
     application.add_handler(CommandHandler("start", onboarding.start))
     application.add_handler(CommandHandler("help", onboarding.help_command))
     application.add_handler(CommandHandler("tasks", tasks.task_board))
+    application.add_handler(CommandHandler("addtask", tasks.add_task))
     application.add_handler(CommandHandler("mytasks", tasks.my_tasks))
     application.add_handler(CommandHandler("decide", decisions.decide))
     application.add_handler(CommandHandler("decisions", decisions.decisions))
@@ -68,7 +69,7 @@ def main() -> None:
     )
     application.add_handler(
         CallbackQueryHandler(
-            tasks.handle_task_callback, pattern=r"^(task_done|task_claim):"
+            tasks.handle_task_callback, pattern=r"^(task_done|task_claim|task_undo):"
         )
     )
     application.add_handler(

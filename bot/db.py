@@ -21,6 +21,12 @@ def init_db() -> None:
     Base.metadata.create_all(engine)
 
     with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE task ADD COLUMN IF NOT EXISTS source "
+                "VARCHAR(16) NOT NULL DEFAULT 'ai'"
+            )
+        )
         for table in Base.metadata.sorted_tables:
             conn.execute(
                 text(f'ALTER TABLE "{table.name}" ENABLE ROW LEVEL SECURITY')

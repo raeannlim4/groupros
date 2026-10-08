@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, field_validator
@@ -10,6 +10,8 @@ from bot import config
 from bot.timeutil import format_for_llm
 
 logger = logging.getLogger(__name__)
+
+MAX_DUE_DAYS = 120
 
 _client = AsyncOpenAI(
     base_url=config.LLM_BASE_URL,
@@ -80,6 +82,12 @@ def _strip_code_fences(raw: str) -> str:
     return text.strip()
 
 
+def _sane_due(due: datetime | None, now: datetime) -> datetime | None:
+    if due is not None and due > now + timedelta(days=MAX_DUE_DAYS):
+        return None
+    return due
+
+
 async def classify_commitment(
     text: str, sender_name: str, now: datetime
 ) -> Commitment | None:
@@ -98,7 +106,73 @@ async def classify_commitment(
             temperature=0,
         )
         raw = response.choices[0].message.content or ""
-        return Commitment.model_validate_json(_strip_code_fences(raw))
+        commitment = Commitment.model_validate_json(_strip_code_fences(raw))
+        commitment.due = _sane_due(commitment.due, now)
+        return commitment
     except Exception:
         logger.exception("classify_commitment failed for message: %r", text)
+        return None
+
+
+PARSE_TASK_SYSTEM_PROMPT = """\
+You extract a task title and deadline from a message a student typed in a \
+Singaporean project group chat. The user is deliberately creating a task, so \
+do NOT judge whether the message is a commitment.
+
+Return JSON only, no prose and no code fences, in exactly this shape:
+{"task": "slides", "due": "2026-10-09T23:59:00+08:00"}
+
+Rules:
+- "task" is a short title in the user's words, with the deadline words \
+removed. e.g. "slides by tmr" -> "slides"; "refs by thurs 9pm" -> "refs".
+- "due" is an ISO 8601 datetime with the local UTC offset, or null if there \
+is no deadline.
+- Resolve relative dates using the current date and time provided.
+- A day with no time means 23:59 that day.
+- Shorthand: tmr/tmrw/tml = tomorrow; tdy = today; eod = today 23:59; \
+nxt wk = 7 days from today at 23:59.
+- Weekdays (mon/tues/wed/thurs/fri/sat/sun): a bare weekday or "this \
+<weekday>" means the next upcoming such weekday (today counts if it is that \
+weekday). "next <weekday>" means that weekday in the following week (the \
+calendar week after the current one), e.g. if today is Thursday then "next \
+tues" is the Tuesday of the following week.
+- "by 9pm" means 21:00 on the resolved day.
+"""
+
+
+class ParsedTask(BaseModel):
+    task: str = ""
+    due: datetime | None = None
+
+    @field_validator("task", mode="before")
+    @classmethod
+    def _task_none_to_empty(cls, value):
+        return value or ""
+
+    @field_validator("due", mode="before")
+    @classmethod
+    def _empty_due_to_none(cls, value):
+        return value or None
+
+
+async def parse_task(text: str, now: datetime) -> ParsedTask | None:
+    user_prompt = (
+        f"Current date and time: {format_for_llm(now)}\n"
+        f"Message: {text}"
+    )
+    try:
+        response = await _client.chat.completions.create(
+            model=config.CAPTURE_MODEL,
+            messages=[
+                {"role": "system", "content": PARSE_TASK_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0,
+        )
+        raw = response.choices[0].message.content or ""
+        parsed = ParsedTask.model_validate_json(_strip_code_fences(raw))
+        parsed.due = _sane_due(parsed.due, now)
+        return parsed
+    except Exception:
+        logger.exception("parse_task failed for message: %r", text)
         return None

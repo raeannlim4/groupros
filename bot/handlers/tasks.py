@@ -4,20 +4,27 @@ import html
 import logging
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType, ParseMode
 from telegram.ext import ContextTypes
 
 from bot.db import SessionLocal, get_or_create_chat, get_or_create_user
 from bot.handlers.reminders import create_reminders
-from bot.models import Chat, Task, User
+from bot.llm import parse_task
+from bot.models import Chat, Reminder, Task, User
 from bot.timeutil import format_absolute, now_utc
 
 logger = logging.getLogger(__name__)
 
 BOARD_LIMIT = 4000
 SHORT_TITLE_LENGTH = 18
+
+ADD_USAGE = (
+    "Usage:\n"
+    "/addtask <task> — add it for yourself, e.g. /addtask submit report by Fri\n"
+    "/addtask open <task> — add an unclaimed task others can claim"
+)
 
 
 def _short(title: str) -> str:
@@ -191,6 +198,21 @@ async def handle_task_callback(
             return
 
         owner = session.get(User, task.owner_user_id) if task.owner_user_id else None
+        if action == "task_undo":
+            owner_name = "the owner"
+            if owner is not None:
+                owner_name = owner.first_name or owner.username or "the owner"
+            if owner is None or owner.telegram_user_id != user.id:
+                await query.answer(
+                    f"Only {owner_name} can undo this.", show_alert=True
+                )
+                return
+            session.execute(delete(Reminder).where(Reminder.task_id == task_id))
+            session.delete(task)
+            session.commit()
+            await query.edit_message_text("Removed")
+            await query.answer()
+            return
         if action == "task_done":
             owner_name = "the owner"
             if owner is not None:
@@ -360,3 +382,67 @@ async def handle_mytasks_callback(
     except Exception:
         logger.exception("Failed to refresh /mytasks")
     await query.answer()
+
+
+async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+    if message is None or chat is None or user is None:
+        return
+
+    if chat.type == ChatType.PRIVATE:
+        await message.reply_text("Use /addtask in a group chat.")
+        return
+
+    args = list(context.args)
+    if not args:
+        await message.reply_text(ADD_USAGE)
+        return
+
+    unclaimed = args[0].lower() == "open"
+    text = " ".join(args[1:] if unclaimed else args).strip()
+    if not text:
+        await message.reply_text(ADD_USAGE)
+        return
+
+    sender_name = user.first_name or user.username or "Unknown"
+    parsed = await parse_task(text, now_utc())
+    if parsed is None or not parsed.task.strip():
+        title = text
+        due = None
+    else:
+        title = parsed.task.strip()
+        due = parsed.due
+
+    with SessionLocal() as session:
+        db_chat = get_or_create_chat(session, chat.id, chat.title)
+        db_user = get_or_create_user(session, user.id, user.username, user.first_name)
+        task = Task(
+            chat_id=db_chat.id,
+            owner_user_id=None if unclaimed else db_user.id,
+            title=title,
+            due_at=due,
+            status="open",
+            source="manual",
+        )
+        session.add(task)
+        session.flush()
+        if not unclaimed:
+            create_reminders(session, task)
+        session.commit()
+        task_id = task.id
+
+    if unclaimed:
+        await message.reply_text(
+            f"📋 Added unclaimed: {title} — anyone can claim it from /tasks"
+        )
+        return
+
+    due_text = f", due {format_absolute(due)}" if due else ""
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("↩️ Undo", callback_data=f"task_undo:{task_id}")]]
+    )
+    await message.reply_text(
+        f"✅ Added: {title} ({sender_name}{due_text})", reply_markup=keyboard
+    )

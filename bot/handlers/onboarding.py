@@ -15,6 +15,7 @@ HELP_TEXT = (
     "Here is what I can do:\n"
     "/tasks – who is doing what and what is due\n"
     "/mytasks – your open tasks across all your groups\n"
+    "/addtask <text> – add a task yourself\n"
     "/decide <text> – log a group decision\n"
     "/decisions – show recent group decisions\n"
     "/ask <question> – ask about past discussion\n"

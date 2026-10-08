@@ -88,6 +88,7 @@ async def _send_capture_prompt(
             title=title,
             due_at=due,
             status="pending",
+            source="ai",
             source_message_id=original.message_id,
         )
         session.add(task)

@@ -125,7 +125,7 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 - **ChatMember**: chat_id, user_id, last_catchup_at (nullable), nudged_for_dm (bool, default False). Unique (chat_id, user_id).
 - **Message**: id, chat_id, user_id, telegram_message_id, text, sent_at, chunked (bool, default False)
 - **MessageChunk**: id, chat_id, first_message_id, last_message_id (Message.id), text, embedding (Vector(EMBEDDING_DIM)), created_at
-- **Task**: id, chat_id, owner_user_id (nullable = unclaimed), title, due_at (nullable), status (`pending`, `open`, `done`, `rejected`), source_message_id, confirm_message_id, created_at, completed_at
+- **Task**: id, chat_id, owner_user_id (nullable = unclaimed), title, due_at (nullable), status (`pending`, `open`, `done`, `rejected`), source (`ai`, `manual`), source_message_id, confirm_message_id, created_at, completed_at
 - **Reminder**: id, task_id, remind_at, sent_at (nullable), kind (`day_before`, `due_soon`)
 - **Decision**: id, chat_id, user_id, text, telegram_message_id, created_at
 
@@ -156,6 +156,12 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 - Buttons: `✅ <short title>` per open task (owner only), and `🙋 Claim: <short title>` per unclaimed task (anyone; claiming sets owner and creates reminders). Refresh the board in place after any tap.
 - Stay under 4096 characters; truncate with "…and N more".
 - `/mytasks`: in private, list the user's open tasks across all their groups, each group's tasks under a bold group-title header, sorted by due date within the group, each task with a `✅` button to mark it done. In a group, reply "Send /mytasks to me privately to see tasks across all your groups."
+
+### 7.3a Manual task creation
+- `/addtask <text>` (group only) parses a title and due date using the same LLM date logic as capture (no date → no deadline, with the 120-day sanity check). Owner is the sender. No confirmation: create the Task as `open` with `source='manual'`, create reminders, and reply `✅ Added: <task> (<Name>, due <date>)` with an `[↩️ Undo]` button that only the creator can use (deletes the task and its reminders, edits the message to "Removed").
+- `/addtask open <text>`: same, but `owner_user_id = NULL` (unclaimed). Reply `📋 Added unclaimed: <task> — anyone can claim it from /tasks`. No reminders until someone claims it.
+- `/addtask` with no text: show usage covering both forms.
+- `Task.source` is `'ai'` for captured tasks and `'manual'` for `/addtask`.
 
 ### 7.4 Decisions
 - `/decide <text>` stores a Decision and replies `📝 Logged: <text>`. Without text, show usage.
@@ -245,3 +251,5 @@ The weekly report is an n8n workflow. Python's only job is to make the data easy
 
 - Edit task title/deadline from the board (owner only). Revisit after Phase 6.
 - `/setname` for custom group nicknames.
+- Assign tasks to others with assignee confirmation.
+- Reply to a missed message with `/addtask` to capture it.
