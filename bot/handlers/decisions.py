@@ -5,7 +5,7 @@ import logging
 
 from sqlalchemy import select
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ParseMode
+from telegram.constants import ChatType, ParseMode
 from telegram.ext import ContextTypes
 
 from bot import links
@@ -91,6 +91,10 @@ async def decide(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if message is None or chat is None or user is None:
         return
 
+    if chat.type == ChatType.PRIVATE:
+        await message.reply_text("Use /decide in a group chat.")
+        return
+
     text = " ".join(context.args).strip()
     if not text:
         await message.reply_text(USAGE)
@@ -117,6 +121,10 @@ async def decisions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
     user = update.effective_user
     if message is None or chat is None or user is None:
+        return
+
+    if chat.type == ChatType.PRIVATE:
+        await message.reply_text("Use /decisions in a group chat.")
         return
 
     with SessionLocal() as session:

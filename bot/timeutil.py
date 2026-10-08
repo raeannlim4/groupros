@@ -57,6 +57,15 @@ def format_relative(dt: datetime, now: datetime | None = None) -> str:
     return format_absolute(local, now=reference)
 
 
+def format_compact(dt: datetime) -> str:
+    """Format as e.g. 'Thu 2 Oct 14:05' (24h) for chunk lines."""
+    local = to_local(dt)
+    return (
+        f"{local.strftime('%a')} {local.day} {local.strftime('%b')} "
+        f"{local.hour:02d}:{local.minute:02d}"
+    )
+
+
 def format_for_llm(dt: datetime | None = None) -> str:
     """Current date/time in DEFAULT_TZ with weekday, for the model prompt."""
     local = to_local(dt) if dt is not None else to_local(now_utc())

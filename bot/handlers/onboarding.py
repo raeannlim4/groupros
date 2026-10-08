@@ -6,8 +6,11 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType, ParseMode
 from telegram.ext import ContextTypes
 
+from sqlalchemy import select
+
 from bot import config
 from bot.db import SessionLocal, get_or_create_chat, get_or_create_user
+from bot.models import Chat
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +123,47 @@ async def chat_title_changed(
     chat = update.effective_chat
     if message is None or chat is None or not message.new_chat_title:
         return
+    if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+        return
     with SessionLocal() as session:
         get_or_create_chat(session, chat.id, message.new_chat_title)
         session.commit()
     logger.info("Chat title updated: %s -> %s", chat.id, message.new_chat_title)
+
+
+async def chat_migrated(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    chat = update.effective_chat
+    if message is None or chat is None:
+        return
+
+    if message.migrate_to_chat_id:
+        old_id, new_id = chat.id, message.migrate_to_chat_id
+    elif message.migrate_from_chat_id:
+        old_id, new_id = message.migrate_from_chat_id, chat.id
+    else:
+        return
+
+    with SessionLocal() as session:
+        old_chat = session.scalar(
+            select(Chat).where(Chat.telegram_chat_id == old_id)
+        )
+        if old_chat is None:
+            logger.info("No chat row for migrated id %s; nothing to update.", old_id)
+            return
+        conflict = session.scalar(
+            select(Chat).where(Chat.telegram_chat_id == new_id)
+        )
+        if conflict is not None and conflict.id != old_chat.id:
+            logger.warning(
+                "Chat migration conflict: id %s and %s both map to %s",
+                old_chat.id,
+                conflict.id,
+                new_id,
+            )
+            return
+        old_chat.telegram_chat_id = new_id
+        if chat.title:
+            old_chat.title = chat.title
+        session.commit()
+    logger.info("Chat migrated %s -> %s", old_id, new_id)

@@ -14,7 +14,8 @@ from telegram.ext import (
 
 from bot import config
 from bot.db import init_db
-from bot.handlers import capture, decisions, onboarding, reminders, tasks
+from bot.handlers import ask, capture, decisions, onboarding, reminders, tasks
+from bot.rag import chunker
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL.upper(), logging.INFO),
@@ -48,6 +49,7 @@ def main() -> None:
     application.add_handler(CommandHandler("mytasks", tasks.my_tasks))
     application.add_handler(CommandHandler("decide", decisions.decide))
     application.add_handler(CommandHandler("decisions", decisions.decisions))
+    application.add_handler(CommandHandler("ask", ask.ask))
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, onboarding.bot_added)
     )
@@ -55,6 +57,9 @@ def main() -> None:
         MessageHandler(
             filters.StatusUpdate.NEW_CHAT_TITLE, onboarding.chat_title_changed
         )
+    )
+    application.add_handler(
+        MessageHandler(filters.StatusUpdate.MIGRATE, onboarding.chat_migrated)
     )
     application.add_handler(
         MessageHandler(
@@ -95,6 +100,9 @@ def main() -> None:
     if application.job_queue is not None:
         application.job_queue.run_repeating(
             reminders.reminder_job, interval=60, first=15
+        )
+        application.job_queue.run_repeating(
+            chunker.chunk_job, interval=120, first=30
         )
     application.add_error_handler(error_handler)
     application.run_polling(allowed_updates=Update.ALL_TYPES)

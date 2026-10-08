@@ -34,5 +34,6 @@ EMBEDDING_MODEL = _require("EMBEDDING_MODEL")
 EMBEDDING_DIM = int(_require("EMBEDDING_DIM"))
 
 DEFAULT_TZ = os.environ.get("DEFAULT_TZ", "Asia/Singapore")
+ASK_MAX_DISTANCE = float(os.environ.get("ASK_MAX_DISTANCE", "0.6"))
 PRIVACY_URL = os.environ.get("PRIVACY_URL") or None
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")

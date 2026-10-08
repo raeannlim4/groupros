@@ -164,6 +164,10 @@ async def task_board(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if message is None or chat is None or user is None:
         return
 
+    if chat.type == ChatType.PRIVATE:
+        await message.reply_text("Use /tasks in a group chat.")
+        return
+
     with SessionLocal() as session:
         db_chat = get_or_create_chat(session, chat.id, chat.title)
         get_or_create_user(session, user.id, user.username, user.first_name)

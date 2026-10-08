@@ -176,3 +176,31 @@ async def parse_task(text: str, now: datetime) -> ParsedTask | None:
     except Exception:
         logger.exception("parse_task failed for message: %r", text)
         return None
+
+
+ASK_SYSTEM_PROMPT = """\
+You answer questions about a student project group's past discussion.
+Answer ONLY using the provided context.
+The context starts with a DECISIONS section listing things the group agreed. \
+Treat those decisions as authoritative: if a decision answers the question, \
+use it and cite its [[<telegram_message_id>]].
+Cite the source message(s) behind each claim using [[<telegram_message_id>]].
+Keep the answer to at most 3 sentences.
+If the answer is not present, reply exactly: I couldn't find that in this \
+group's chat or decisions.
+"""
+
+
+async def answer_question(question: str, context: str) -> str:
+    response = await _client.chat.completions.create(
+        model=config.ASK_MODEL,
+        messages=[
+            {"role": "system", "content": ASK_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": f"Context:\n{context}\n\nQuestion: {question}",
+            },
+        ],
+        temperature=0,
+    )
+    return response.choices[0].message.content or ""
