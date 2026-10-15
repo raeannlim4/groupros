@@ -204,3 +204,40 @@ async def answer_question(question: str, context: str) -> str:
         temperature=0,
     )
     return response.choices[0].message.content or ""
+
+
+CATCHUP_SYSTEM_PROMPT = """\
+You help one member of a student project group catch up on what they missed.
+You get the group's recent decisions and a transcript of recent messages.
+
+Write at most 6 short bullet points, in this order:
+1. decisions made
+2. files or links shared
+3. schedule changes
+4. anything that mentions the reader by name or asks for their input; start \
+those bullets with "Needs your input: ".
+
+Every bullet must end with the id(s) of the message(s) it is based on, written \
+as [[<telegram_message_id>]], copied exactly from the context.
+Use ONLY the provided context. Never invent a message id. If a category has \
+nothing, skip it. Keep each bullet to one short line.
+Return plain text only, one bullet per line, each line starting with "- ".
+"""
+
+
+async def catchup_summary(reader_name: str, context: str) -> str:
+    response = await _client.chat.completions.create(
+        model=config.ASK_MODEL,
+        messages=[
+            {"role": "system", "content": CATCHUP_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"Reader's first name: {reader_name}\n\n"
+                    f"Context:\n{context}"
+                ),
+            },
+        ],
+        temperature=0,
+    )
+    return response.choices[0].message.content or ""

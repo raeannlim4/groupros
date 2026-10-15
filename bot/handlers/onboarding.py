@@ -22,7 +22,8 @@ HELP_TEXT = (
     "/decide <text> – log a group decision\n"
     "/decisions – show recent group decisions\n"
     "/ask <question> – ask about past discussion\n"
-    "/catchup – catch up on what you missed\n"
+    "/catchup – summary of what you missed since your last catch-up\n"
+    "/catchup 2d – summary of the last 2 days (use any number of days, hours, minutes or weeks)\n"
     "/forget – delete your data\n"
     "/help – show this message"
 )

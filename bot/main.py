@@ -14,7 +14,15 @@ from telegram.ext import (
 
 from bot import config
 from bot.db import init_db
-from bot.handlers import ask, capture, decisions, onboarding, reminders, tasks
+from bot.handlers import (
+    ask,
+    capture,
+    catchup,
+    decisions,
+    onboarding,
+    reminders,
+    tasks,
+)
 from bot.rag import chunker
 
 logging.basicConfig(
@@ -50,6 +58,7 @@ def main() -> None:
     application.add_handler(CommandHandler("decide", decisions.decide))
     application.add_handler(CommandHandler("decisions", decisions.decisions))
     application.add_handler(CommandHandler("ask", ask.ask))
+    application.add_handler(CommandHandler("catchup", catchup.catchup))
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, onboarding.bot_added)
     )
