@@ -18,6 +18,7 @@ from bot.db import (
     get_or_create_chat_member,
     get_or_create_user,
 )
+from bot.grounding import normalise_for_grounding
 from bot.handlers.reminders import create_reminders
 from bot.llm import (
     MeetingActionItem,
@@ -117,20 +118,34 @@ def _timestamp_labels(transcript: str) -> dict[int, str]:
 
 
 def _match_timestamp(value: str, labels: dict[int, str]) -> str | None:
-    seconds = _to_seconds(value) if value else None
-    if seconds is None:
+    if not value:
         return None
-    return labels.get(seconds)
+    seconds = _to_seconds(value)
+    if seconds is not None and seconds in labels:
+        return labels[seconds]
+    needle = normalise_for_grounding(value)
+    if needle:
+        for label in labels.values():
+            if normalise_for_grounding(label) == needle:
+                return label
+    return None
 
 
 def _ground(summary: MeetingSummary, transcript: str) -> None:
     labels = _timestamp_labels(transcript)
+    extracted = len(summary.decisions) + len(summary.action_items)
     decisions = []
     for decision in summary.decisions:
         label = _match_timestamp(decision.timestamp, labels)
         if label is not None:
             decision.timestamp = label
             decisions.append(decision)
+        else:
+            logger.debug(
+                "Dropped meeting decision, timestamp not in transcript: %r (%r)",
+                decision.timestamp,
+                decision.text,
+            )
     summary.decisions = decisions
     actions = []
     for action in summary.action_items:
@@ -138,7 +153,18 @@ def _ground(summary: MeetingSummary, transcript: str) -> None:
         if label is not None:
             action.timestamp = label
             actions.append(action)
+        else:
+            logger.debug(
+                "Dropped meeting action item, timestamp not in transcript: %r (%r)",
+                action.timestamp,
+                action.task,
+            )
     summary.action_items = actions
+    logger.info(
+        "Meeting grounding: kept %d of %d items",
+        len(summary.decisions) + len(summary.action_items),
+        extracted,
+    )
 
 
 def _date_label(moment) -> str:
