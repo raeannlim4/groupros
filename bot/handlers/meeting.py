@@ -19,10 +19,17 @@ from bot.db import (
     get_or_create_user,
 )
 from bot.handlers.reminders import create_reminders
-from bot.llm import MeetingActionItem, MeetingDecision, MeetingSummary, summarize_meeting
+from bot.llm import (
+    MeetingActionItem,
+    MeetingDecision,
+    MeetingSummary,
+    MeetingTimeoutError,
+    MeetingTooLongError,
+    summarize_meeting,
+)
 from bot.models import ChatMember, Decision, Message, Task, User
 from bot.timeutil import format_absolute, now_utc, to_local
-from bot.vtt import MAX_TRANSCRIPT_CHARS, clean_vtt
+from bot.vtt import MAX_TRANSCRIPT_CHARS, MAX_TRANSCRIPT_WORDS, clean_vtt
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +41,43 @@ USAGE = (
 )
 PRIVATE = "Use /meeting in a group chat."
 FAILED = "Sorry, something went wrong, try again."
-TOO_LONG = "That transcript is too long to summarise (over 150,000 characters)."
 NOTHING = "I couldn't find clear decisions or action items in this transcript."
+EMPTY_FILE = (
+    "That transcript looks empty. Check you downloaded the Audio transcript "
+    "(.vtt) from Zoom."
+)
+UNSUPPORTED = "I can only read .vtt (Zoom transcript), .txt files, or pasted text."
+DECODE_ERROR = (
+    "I couldn't read that file. Make sure it's the .vtt transcript from Zoom, "
+    "not the video or audio recording."
+)
+TIMEOUT = (
+    "Summarising took too long. Try again, or split the transcript into "
+    "smaller parts."
+)
+MAX_FILE_BYTES = 1_000_000
 
 _TIMESTAMP = re.compile(r"\[(\d{1,3}:\d{2}(?::\d{2})?)\]")
+
+
+class TranscriptError(Exception):
+    """A problem with the transcript that has a specific user-facing reply."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+def _word_count(text: str) -> int:
+    return len(text.split())
+
+
+def _too_long_message(words: int) -> str:
+    return (
+        f"This transcript is too long for me to summarise (about {words} words; "
+        f"my limit is about {MAX_TRANSCRIPT_WORDS} words, roughly a 90-minute "
+        "meeting). Try splitting it into parts and sending each one with /meeting."
+    )
 
 
 @dataclass
@@ -225,10 +265,17 @@ async def _read_source(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif reply.text:
             return reply.text, reply.date, False
     if document is not None:
+        name = (document.file_name or "").lower()
+        if not (name.endswith(".vtt") or name.endswith(".txt")):
+            raise TranscriptError(UNSUPPORTED)
+        if document.file_size and document.file_size > MAX_FILE_BYTES:
+            raise TranscriptError(_too_long_message(document.file_size // 6))
         tg_file = await context.bot.get_file(document.file_id)
         data = await tg_file.download_as_bytearray()
-        text = bytes(data).decode("utf-8", errors="replace")
-        name = (document.file_name or "").lower()
+        try:
+            text = bytes(data).decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise TranscriptError(DECODE_ERROR) from exc
         return text, source_date, name.endswith(".vtt")
     args = " ".join(context.args or []).strip()
     if args:
@@ -248,6 +295,9 @@ async def meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     try:
         source = await _read_source(update, context)
+    except TranscriptError as exc:
+        await message.reply_text(str(exc))
+        return
     except Exception:
         logger.exception("Failed to read meeting transcript")
         await message.reply_text(FAILED)
@@ -257,16 +307,30 @@ async def meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     raw, source_date, is_vtt = source
+    if len(raw) > MAX_TRANSCRIPT_CHARS:
+        await message.reply_text(_too_long_message(_word_count(raw)))
+        return
     cleaned = clean_vtt(raw) if is_vtt else raw.strip()
     if not cleaned:
-        await message.reply_text(USAGE)
+        await message.reply_text(EMPTY_FILE)
         return
     if len(cleaned) > MAX_TRANSCRIPT_CHARS:
-        await message.reply_text(TOO_LONG)
+        await message.reply_text(_too_long_message(_word_count(cleaned)))
         return
 
     started = time.monotonic()
-    summary = await summarize_meeting(cleaned, source_date)
+    try:
+        summary = await summarize_meeting(cleaned, source_date)
+    except MeetingTooLongError:
+        await message.reply_text(_too_long_message(_word_count(cleaned)))
+        return
+    except MeetingTimeoutError:
+        await message.reply_text(TIMEOUT)
+        return
+    except Exception:
+        logger.exception("Meeting summary failed for chat %s", chat.id)
+        await message.reply_text(FAILED)
+        return
     if summary is None:
         await message.reply_text(FAILED)
         return
