@@ -17,8 +17,12 @@ The bot sits in a group chat and handles coordination nobody wants to do.
 6. **Catch-up**: `/catchup` privately summarises what you missed.
 7. **Meeting minutes**: `/meeting` on a Zoom transcript (`.vtt`) or plain text posts a summary of the discussion — decisions and action items — with buttons to log decisions and add tasks.
 
+**Planning (week 3):**
+8. **Project brief**: `/brief` reads the assignment brief (PDF, Word or text) and saves the key facts — deadline, presentation, deliverables, weighting — so the group and the AI share one source of truth.
+9. **Plan**: `/plan` turns the brief's final deadline into 4–7 milestones you can claim as unclaimed tasks.
+
 **Built in n8n, not Python (week 2):**
-8. **Weekly report**: every Sunday evening, posts completed tasks, upcoming deadlines and decisions.
+10. **Weekly report**: every Sunday evening, posts completed tasks, upcoming deadlines and decisions.
 
 Core principle: **the AI suggests, humans decide.** The bot never creates, changes or deletes a task without a human tapping a button.
 
@@ -101,7 +105,7 @@ bot/
   main.py  config.py  db.py  models.py
   llm.py             # ALL chat-model calls
   embeddings.py      # ALL embedding calls
-  timeutil.py  links.py  vtt.py
+  timeutil.py  links.py  vtt.py  documents.py  brief.py
   handlers/
     onboarding.py    # /start, bot added to group, /forget, /help
     capture.py       # store messages, task capture, confirm buttons
@@ -111,6 +115,8 @@ bot/
     ask.py           # /ask
     catchup.py       # /catchup
     meeting.py       # /meeting (transcript summaries)
+    brief.py         # /brief (assignment brief facts)
+    plan.py          # /plan (milestones)
   rag/
     chunker.py       # chunking job
     retrieve.py      # vector search
@@ -133,6 +139,7 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 - **Task**: id, chat_id, owner_user_id (nullable = unclaimed), title, due_at (nullable), status (`pending`, `open`, `done`, `rejected`), source (`ai`, `manual`), source_message_id, confirm_message_id, created_at, completed_at
 - **Reminder**: id, task_id, remind_at, sent_at (nullable), kind (`day_before`, `due_soon`)
 - **Decision**: id, chat_id, user_id, text, telegram_message_id, created_at
+- **ProjectBrief**: id, chat_id (unique), facts (JSON), source_filename, uploaded_by_user_id, created_at
 
 ## 7. Feature specs
 
@@ -217,6 +224,21 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 - Each action item gets a `[📌 Add task]` button. Match `owner_name` to a member of this chat by first name or username (case-insensitive). If matched, only that person can confirm (same alert pattern as capture). If unmatched or null, confirming creates an unclaimed task. Confirmed tasks get reminders as normal.
 - Store the posted minutes (not the transcript) as a bot Message row so the chunker indexes it for `/ask` and `/catchup`. Never store the transcript file contents anywhere.
 
+### 7.10 Project brief (`/brief`)
+- `/brief` works in a group as the caption of, or a reply to, a `.pdf`, `.docx` or `.txt` file, or as pasted text. Extract text with `pypdf` (PDF) and `python-docx` (Word). Same size limits and error handling as `/meeting` (too long, empty, unsupported type, unreadable). If a PDF yields almost no text, reply: "This PDF looks scanned (images only), so I can't read it. Try a text-based PDF or paste the text."
+- The LLM returns JSON facts: `final_deadline`, `presentation` (date, duration), `deliverables` (list with format/limits), `word_limit`, `group_size`, `weighting`, `other_key_dates`. Each fact has `value`, an optional resolved `date`, and `quote` (the exact source sentence). Relative/teaching-week dates (e.g. "Week 11") stay as text with `date` null — never guess a date.
+- Grounding: normalise whitespace and case, then drop any fact whose `quote` is not found in the document text.
+- Save one `ProjectBrief` per chat, replacing the previous one: the facts JSON, the source filename, who uploaded it, and when. Never store the full document text.
+- Post the summary in the group: 📅 deadline, 🎤 presentation, 📦 deliverables, ⚖️ weighting, then "❓ Not stated in brief:" listing missing key fields.
+- `/brief` with no input shows the saved brief if one exists, otherwise usage.
+- `/brief set <field> <value>` (fields: `deadline`, `presentation`) lets anyone override a date, using the same LLM date logic as `/addtask`. Show who changed it.
+- The brief's facts are included in `/ask` context as a clearly labelled authoritative "PROJECT BRIEF" section (above decisions). Citations to brief facts render as "(from brief)" with no link.
+
+### 7.11 Plan (`/plan`)
+- `/plan` in a group uses the saved brief's `final_deadline`, or `/plan by <date>`. If neither exists, show usage.
+- The LLM generates 4–7 milestones working backwards from the deadline, based on the brief's deliverables, leaving a buffer day before the deadline. It receives the chat's existing open tasks and must not duplicate them. All milestone dates must be between today and the deadline inclusive; drop any that are not.
+- Show the plan with `[Create as unclaimed tasks] [Cancel]`. Anyone can tap. **Create** inserts `open`, unclaimed tasks (`owner_user_id = NULL`, `source = 'plan'`) and edits the message to "✅ Added N tasks — claim them on /tasks". **Cancel** edits it to "Plan dismissed".
+
 ## 8. n8n (built by me in the n8n UI, not by you)
 
 The weekly report is an n8n workflow. Python's only job is to make the data easy to query. Do not build the weekly report in Python. Make sure table and column names match section 6 exactly, because the n8n SQL depends on them.
@@ -258,6 +280,7 @@ The weekly report is an n8n workflow. Python's only job is to make the data easy
 6. `/catchup`.
 7. `/forget` completeness, error handling review, tests, README.
 8. `/meeting`: transcript summaries with decisions and action items.
+9. `/brief` and `/plan`: project brief facts and milestone plans.
 
 ## Parking lot
 (Ideas go here first. Only build after the current phase works and is committed.)

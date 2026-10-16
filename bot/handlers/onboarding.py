@@ -27,6 +27,8 @@ HELP_TEXT = (
     "/catchup 2d – last 2 days, privately (any number of days, hours, minutes or weeks)\n"
     "/catchup here – post the summary in the group\n"
     "/meeting – summarise a transcript (.vtt, .txt or pasted text)\n"
+    "/brief – read the assignment brief and save its key facts\n"
+    "/plan – turn the brief's deadline into milestones\n"
     "/forget – delete your data\n"
     "/help – show this message"
 )

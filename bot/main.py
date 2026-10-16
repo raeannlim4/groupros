@@ -16,11 +16,13 @@ from bot import config
 from bot.db import init_db
 from bot.handlers import (
     ask,
+    brief,
     capture,
     catchup,
     decisions,
     meeting,
     onboarding,
+    plan,
     reminders,
     tasks,
 )
@@ -63,12 +65,22 @@ def main() -> None:
     application.add_handler(CommandHandler("ask", ask.ask))
     application.add_handler(CommandHandler("catchup", catchup.catchup))
     application.add_handler(CommandHandler("meeting", meeting.meeting))
+    application.add_handler(CommandHandler("brief", brief.brief))
+    application.add_handler(CommandHandler("plan", plan.plan))
     application.add_handler(
         MessageHandler(
             filters.ChatType.GROUPS
             & filters.CaptionRegex(r"^/meeting(?:@\w+)?(?:\s|$)")
             & filters.Document.ALL,
             meeting.meeting,
+        )
+    )
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS
+            & filters.CaptionRegex(r"^/brief(?:@\w+)?(?:\s|$)")
+            & filters.Document.ALL,
+            brief.brief,
         )
     )
     application.add_handler(
@@ -123,6 +135,11 @@ def main() -> None:
     application.add_handler(
         CallbackQueryHandler(
             meeting.handle_meeting_callback, pattern=r"^(mtg_log|mtg_add):"
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            plan.handle_plan_callback, pattern=r"^plan_(create|cancel):"
         )
     )
     application.add_handler(

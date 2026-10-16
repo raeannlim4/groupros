@@ -5,5 +5,6 @@ pgvector==0.4.2
 openai==1.109.1
 pydantic==2.13.5
 pypdf==5.9.0
+python-docx==1.2.0
 python-dotenv==1.2.4
 tzdata==2026.5

@@ -9,6 +9,7 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, field_validator
 
 from bot import config
+from bot.brief import BriefFacts
 from bot.timeutil import format_for_llm
 
 logger = logging.getLogger(__name__)
@@ -239,7 +240,10 @@ async def parse_task(text: str, now: datetime) -> ParsedTask | None:
 ASK_SYSTEM_PROMPT = """\
 You answer questions about a student project group's past discussion.
 Answer ONLY using the provided context.
-The context starts with a DECISIONS section listing things the group agreed. \
+The context may start with a PROJECT BRIEF section holding authoritative facts \
+about the assignment. If a brief fact answers the question, use it and cite it \
+as [[brief]].
+The context also has a DECISIONS section listing things the group agreed. \
 Treat those decisions as authoritative: if a decision answers the question, \
 use it and cite its [[<telegram_message_id>]].
 Cite the source message(s) behind each claim using [[<telegram_message_id>]].
@@ -433,3 +437,120 @@ async def summarize_meeting(
     for item in summary.action_items:
         item.due = _sane_due(item.due, meeting_date)
     return summary
+
+
+class BriefTooLongError(Exception):
+    """The assignment brief was too large to send to the model."""
+
+
+class BriefTimeoutError(Exception):
+    """The model took too long to read the assignment brief."""
+
+
+BRIEF_SYSTEM_PROMPT = """\
+You read an assignment brief for a student project group and extract its key facts.
+
+Return JSON only, no prose and no code fences, in exactly this shape:
+{"final_deadline": {"value": "Friday 11 Oct 2026, 11:59pm", "date": "2026-10-11T23:59:00+08:00", "quote": "Final submission due Friday 11 October 2026 by 23:59."}, "presentation": {"value": "Week 12, in class, 10 minutes", "date": null, "quote": "Presentation in Week 12 (10 minutes)."}, "deliverables": [{"value": "Report — PDF, max 3000 words", "date": null, "quote": "Submit a report (PDF) of no more than 3000 words."}], "word_limit": {"value": "3000 words", "date": null, "quote": "no more than 3000 words"}, "group_size": {"value": "4 to 5 students", "date": null, "quote": "Groups of 4 to 5 students."}, "weighting": {"value": "40% of the final grade", "date": null, "quote": "This assignment is worth 40% of your final grade."}, "other_key_dates": [{"value": "Proposal due Week 8", "date": null, "quote": "Proposal due Week 8."}]}
+
+Rules:
+- Every fact has "value" (what it says, in your words), "date" (an ISO 8601 datetime with the local UTC offset, or null) and "quote" (the exact source sentence copied from the document).
+- "final_deadline" is the assignment's final submission deadline.
+- "presentation" is when and how long the presentation is; "date" is the presentation date when the document states one.
+- "deliverables" is what must be submitted, each with its format and any limits.
+- "word_limit", "group_size" and "weighting" are as stated.
+- "other_key_dates" holds the other important dates.
+- "date" MUST be null when the document gives a relative or teaching-week date (such as "Week 11") instead of a calendar date. Never guess a date.
+- "quote" MUST be copied exactly from the document so it can be found there. If a fact is not in the document, use null (or an empty list).
+"""
+
+
+async def extract_brief(text: str, document_date: datetime) -> BriefFacts:
+    user_prompt = (
+        f"Document date and time: {format_for_llm(document_date)}\n\n"
+        f"Document:\n{text}"
+    )
+    try:
+        raw = await _chat(
+            config.ASK_MODEL,
+            [
+                {"role": "system", "content": BRIEF_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            config.ASK_MAX_TOKENS,
+        )
+    except openai.APITimeoutError as exc:
+        raise BriefTimeoutError() from exc
+    except openai.BadRequestError as exc:
+        if _is_context_length_error(exc):
+            raise BriefTooLongError() from exc
+        raise
+    return BriefFacts.model_validate_json(_strip_code_fences(raw))
+
+
+PLAN_SYSTEM_PROMPT = """\
+You plan milestones for a student project group working towards a deadline.
+You get the final deadline, the assignment brief's facts (if any) and the group's existing open tasks.
+
+Return JSON only, no prose and no code fences, in exactly this shape:
+{"milestones": [{"title": "Draft survey questions", "due": "2026-10-05T23:59:00+08:00"}]}
+
+Rules:
+- Generate 4 to 7 milestones that work backwards from the deadline, leaving at least one buffer day before the deadline.
+- "title" is a short, actionable milestone title.
+- "due" is an ISO 8601 datetime with the local UTC offset. A day with no time means 23:59 that day.
+- Every milestone's date MUST be on or after today and on or before the deadline. Resolve relative dates using the current date provided.
+- Do NOT duplicate the existing open tasks; create new, distinct milestones.
+- Order the milestones from earliest to latest.
+"""
+
+
+class PlanMilestone(BaseModel):
+    title: str = ""
+    due: datetime | None = None
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _title_none_to_empty(cls, value):
+        return value or ""
+
+    @field_validator("due", mode="before")
+    @classmethod
+    def _empty_due_to_none(cls, value):
+        return value or None
+
+
+class PlanList(BaseModel):
+    milestones: list[PlanMilestone] = Field(default_factory=list)
+
+    @field_validator("milestones", mode="before")
+    @classmethod
+    def _none_to_empty(cls, value):
+        return value or []
+
+
+async def plan_milestones(
+    deadline: datetime,
+    brief_text: str,
+    existing_titles: list[str],
+    now: datetime,
+) -> list[PlanMilestone]:
+    if existing_titles:
+        existing = "\n".join(f"- {title}" for title in existing_titles)
+    else:
+        existing = "- (none)"
+    user_prompt = (
+        f"Current date and time: {format_for_llm(now)}\n"
+        f"Final deadline: {format_for_llm(deadline)}\n\n"
+        f"Existing open tasks:\n{existing}\n\n"
+        f"Assignment brief:\n{brief_text or '(no brief uploaded)'}"
+    )
+    raw = await _chat(
+        config.ASK_MODEL,
+        [
+            {"role": "system", "content": PLAN_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        config.ASK_MAX_TOKENS,
+    )
+    return PlanList.model_validate_json(_strip_code_fences(raw)).milestones

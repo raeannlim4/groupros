@@ -11,10 +11,11 @@ from telegram.constants import ChatType, ParseMode
 from telegram.ext import ContextTypes
 
 from bot import config, links
+from bot.brief import KEY_FIELDS, BriefFacts
 from bot.db import SessionLocal, get_or_create_chat, get_or_create_user
 from bot.embeddings import embed_texts
 from bot.llm import answer_question
-from bot.models import Decision, Message, User
+from bot.models import Decision, Message, ProjectBrief, User
 from bot.rag.retrieve import search_chunks
 from bot.timeutil import format_absolute
 
@@ -25,6 +26,7 @@ DECISION_LIMIT = 20
 NOT_FOUND = "I couldn't find that in this group's chat or decisions."
 PRIVATE_REPLY = "Use /ask in a group chat."
 CITATION_RE = re.compile(r"\[\[(\d+)\]\]")
+BRIEF_CITATION_RE = re.compile(r"\[\[\s*brief\s*\]\]", re.IGNORECASE)
 SPACE_RE = re.compile(r" {2,}")
 SPACE_BEFORE_PUNCT_RE = re.compile(r"\s+([.,;:!?])")
 
@@ -42,9 +44,46 @@ def _has_decisions(session, chat_id: int) -> bool:
     return bool(count)
 
 
+def _has_brief(session, chat_id: int) -> bool:
+    brief = session.scalar(
+        select(ProjectBrief).where(ProjectBrief.chat_id == chat_id)
+    )
+    return brief is not None and bool(brief.facts)
+
+
+def _brief_part(session, chat_id: int, sources: dict) -> str | None:
+    brief = session.scalar(
+        select(ProjectBrief).where(ProjectBrief.chat_id == chat_id)
+    )
+    if brief is None:
+        return None
+    facts = BriefFacts.model_validate(brief.facts or {})
+    lines = ["PROJECT BRIEF (authoritative facts about the assignment):"]
+    for key, label in KEY_FIELDS:
+        fact = getattr(facts, key)
+        if fact is not None and fact.value.strip():
+            date = f" ({format_absolute(fact.date)})" if fact.date else ""
+            lines.append(f"- {label}: {fact.value}{date} [[brief]]")
+    for deliverable in facts.deliverables:
+        if deliverable.value.strip():
+            lines.append(f"- Deliverable: {deliverable.value} [[brief]]")
+    for other in facts.other_key_dates:
+        if other.value.strip():
+            date = f" ({format_absolute(other.date)})" if other.date else ""
+            lines.append(f"- Key date: {other.value}{date} [[brief]]")
+    if len(lines) == 1:
+        return None
+    sources["brief"] = None
+    return "\n".join(lines)
+
+
 def build_context(session, chat_id: int, chunks):
     parts: list[str] = []
-    sources: dict[int, object] = {}
+    sources: dict = {}
+
+    brief = _brief_part(session, chat_id, sources)
+    if brief:
+        parts.append(brief)
 
     decisions = list(
         session.scalars(
@@ -87,7 +126,7 @@ def build_context(session, chat_id: int, chunks):
 
 
 def render_answer(
-    answer: str, telegram_chat_id: int, sources: dict[int, object]
+    answer: str, telegram_chat_id: int, sources: dict
 ) -> tuple[str, int]:
     valid = 0
 
@@ -103,8 +142,16 @@ def render_answer(
         sent_at = sources[message_id]
         return format_absolute(sent_at) if sent_at is not None else str(message_id)
 
+    def replace_brief(match: re.Match) -> str:
+        nonlocal valid
+        if "brief" not in sources:
+            return ""
+        valid += 1
+        return "(from brief)"
+
     escaped = html.escape(answer, quote=False)
-    rendered = CITATION_RE.sub(replace, escaped)
+    rendered = BRIEF_CITATION_RE.sub(replace_brief, escaped)
+    rendered = CITATION_RE.sub(replace, rendered)
     rendered = SPACE_RE.sub(" ", rendered)
     rendered = SPACE_BEFORE_PUNCT_RE.sub(r"\1", rendered)
     return rendered.strip(), valid
@@ -125,10 +172,12 @@ async def answer_for_chat(
     )
 
     with SessionLocal() as session:
-        has_decisions = _has_decisions(session, chat_db_id)
+        has_context = _has_decisions(session, chat_db_id) or _has_brief(
+            session, chat_db_id
+        )
 
     best_distance = results[0][1] if results else None
-    if not has_decisions and (
+    if not has_context and (
         best_distance is None or best_distance > config.ASK_MAX_DISTANCE
     ):
         logger.info(

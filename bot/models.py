@@ -8,6 +8,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -130,6 +131,21 @@ class Decision(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
     text: Mapped[str] = mapped_column(Text)
     telegram_message_id: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class ProjectBrief(Base):
+    __tablename__ = "projectbrief"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    chat_id: Mapped[int] = mapped_column(
+        ForeignKey("chat.id", ondelete="CASCADE"), unique=True
+    )
+    facts: Mapped[dict] = mapped_column(JSON)
+    source_filename: Mapped[str | None] = mapped_column(String(255))
+    uploaded_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
