@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timedelta
 
 from openai import AsyncOpenAI
@@ -88,6 +89,41 @@ def _sane_due(due: datetime | None, now: datetime) -> datetime | None:
     return due
 
 
+def _extra_body() -> dict:
+    """OpenRouter routing hints. Empty when the vars are blank."""
+    body: dict = {}
+    if config.LLM_PROVIDER_SORT:
+        body["provider"] = {"sort": config.LLM_PROVIDER_SORT}
+    if config.LLM_REASONING.strip().lower() == "off":
+        body["reasoning"] = {"enabled": False}
+    return body
+
+
+async def _chat(model: str, messages: list[dict], max_tokens: int) -> str:
+    extra = _extra_body()
+    try:
+        response = await _client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0,
+            max_tokens=max_tokens,
+            extra_body=extra or None,
+        )
+    except Exception:
+        if not extra:
+            raise
+        logger.warning(
+            "LLM call rejected extra_body %s; retrying without it.", extra
+        )
+        response = await _client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0,
+            max_tokens=max_tokens,
+        )
+    return response.choices[0].message.content or ""
+
+
 async def classify_commitment(
     text: str, sender_name: str, now: datetime
 ) -> Commitment | None:
@@ -97,15 +133,14 @@ async def classify_commitment(
         f"Message: {text}"
     )
     try:
-        response = await _client.chat.completions.create(
-            model=config.CAPTURE_MODEL,
-            messages=[
+        raw = await _chat(
+            config.CAPTURE_MODEL,
+            [
                 {"role": "system", "content": CAPTURE_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0,
+            config.CAPTURE_MAX_TOKENS,
         )
-        raw = response.choices[0].message.content or ""
         commitment = Commitment.model_validate_json(_strip_code_fences(raw))
         commitment.due = _sane_due(commitment.due, now)
         return commitment
@@ -161,15 +196,14 @@ async def parse_task(text: str, now: datetime) -> ParsedTask | None:
         f"Message: {text}"
     )
     try:
-        response = await _client.chat.completions.create(
-            model=config.CAPTURE_MODEL,
-            messages=[
+        raw = await _chat(
+            config.CAPTURE_MODEL,
+            [
                 {"role": "system", "content": PARSE_TASK_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0,
+            config.CAPTURE_MAX_TOKENS,
         )
-        raw = response.choices[0].message.content or ""
         parsed = ParsedTask.model_validate_json(_strip_code_fences(raw))
         parsed.due = _sane_due(parsed.due, now)
         return parsed
@@ -192,18 +226,17 @@ group's chat or decisions.
 
 
 async def answer_question(question: str, context: str) -> str:
-    response = await _client.chat.completions.create(
-        model=config.ASK_MODEL,
-        messages=[
+    return await _chat(
+        config.ASK_MODEL,
+        [
             {"role": "system", "content": ASK_SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": f"Context:\n{context}\n\nQuestion: {question}",
             },
         ],
-        temperature=0,
+        config.ASK_MAX_TOKENS,
     )
-    return response.choices[0].message.content or ""
 
 
 CATCHUP_SYSTEM_PROMPT = """\
@@ -214,21 +247,35 @@ Write at most 6 short bullet points, in this order:
 1. decisions made
 2. files or links shared
 3. schedule changes
-4. anything that mentions the reader by name or asks for their input; start \
+4. tasks
+5. anything that mentions the reader by name or asks for their input; start \
 those bullets with "Needs your input: ".
+6. off-topic items last.
 
-Every bullet must end with the id(s) of the message(s) it is based on, written \
-as [[<telegram_message_id>]], copied exactly from the context.
-Use ONLY the provided context. Never invent a message id. If a category has \
-nothing, skip it. Keep each bullet to one short line.
+Every bullet is either project-related or off-topic. Combine ALL off-topic \
+items (decisions or discussion unrelated to the group's project) into ONE \
+single bullet placed last. Start that bullet with "OFFTOPIC: " and use neutral \
+wording only, e.g. "OFFTOPIC: Also logged 3 decisions unrelated to the \
+project." Never omit off-topic items. The off-topic bullet must have NO \
+citation links.
+
+Each project-related bullet may end with at most 2 message ids, written as \
+[[<telegram_message_id>]], copied exactly from the context. Pick the most \
+relevant. Use ONLY the provided context. Never invent a message id. If a \
+category has nothing, skip it. Keep each bullet to one short line.
+
+Never describe messages or people with judgmental or emotional labels such as \
+"romantic", "hostile", "rude" or "weird". Describe what was decided or shared, \
+never characterise it.
+
 Return plain text only, one bullet per line, each line starting with "- ".
 """
 
 
 async def catchup_summary(reader_name: str, context: str) -> str:
-    response = await _client.chat.completions.create(
-        model=config.ASK_MODEL,
-        messages=[
+    return await _chat(
+        config.ASK_MODEL,
+        [
             {"role": "system", "content": CATCHUP_SYSTEM_PROMPT},
             {
                 "role": "user",
@@ -238,6 +285,5 @@ async def catchup_summary(reader_name: str, context: str) -> str:
                 ),
             },
         ],
-        temperature=0,
+        config.ASK_MAX_TOKENS,
     )
-    return response.choices[0].message.content or ""

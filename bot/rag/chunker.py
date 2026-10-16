@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import timedelta
 
 from sqlalchemy import select
@@ -80,7 +81,9 @@ async def _process_chat(session, chat_id: int, now) -> None:
 
     cache: dict = {}
     texts = [_build_text(session, cache, chat_id, batch) for batch in specs]
+    started = time.perf_counter()
     vectors = await _embed_all(texts)
+    embedded = time.perf_counter()
 
     for batch, text, vector in zip(specs, texts, vectors):
         session.add(
@@ -95,7 +98,12 @@ async def _process_chat(session, chat_id: int, now) -> None:
         for message in batch:
             message.chunked = True
     session.commit()
-    logger.info("Chunked %d chunks for chat %s.", len(specs), chat_id)
+    logger.info(
+        "Chunked %d chunks for chat %s (embed %.2fs).",
+        len(specs),
+        chat_id,
+        embedded - started,
+    )
 
 
 async def chunk_job(context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -1,6 +1,6 @@
 # SPEC.md — Telegram Group Coordination Bot
 
-You are helping me build a Telegram bot for student project groups. Read this whole file before writing any code. Follow it strictly. If something here is ambiguous or seems wrong, ask me instead of guessing.
+You are helping me build a Telegram bot for student project groups. Read this whole file before writing any code. Follow it strictly. If something is ambiguous, make the simplest reasonable choice consistent with this spec and list your assumptions at the end. Only ask before deleting data or making changes that are hard to undo.
 
 ## 1. What the bot does
 
@@ -196,8 +196,11 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 ### 7.8 Catch-up
 - `/catchup` in a group. Window: messages since that member's `last_catchup_at`; if null, last 24 hours. Optional argument like `/catchup 2d` overrides.
 - If the window is under 5 messages, reply "Not much happened, you're up to date."
-- Otherwise LLM produces at most 6 bullets in this order: decisions made, files/links shared, schedule changes, anything that mentions the requesting user by name or asks for their input ("Needs your input"). Each bullet cites one message (same citation + link logic as /ask). Cap input at ~100,000 characters (most recent messages win).
-- **Send privately** if `can_dm`; otherwise reply in the group. Update `last_catchup_at`.
+- Otherwise the LLM produces at most 6 bullets, in this order: decisions made, files/links shared, schedule changes, tasks, anything that mentions the requesting user by name or asks for their input ("Needs your input"), then the off-topic bullet last. Cap input at ~100,000 characters (most recent messages win).
+- The LLM must mark every bullet as project-related or off-topic. Off-topic items (decisions or discussion unrelated to the group's project) are combined into ONE bullet placed last, with NO citation links, using neutral wording only, e.g. "• Also logged: 3 decisions unrelated to the project." Never omit off-topic items.
+- The prompt must forbid describing messages or people with judgmental or emotional labels (e.g. "romantic", "hostile", "rude", "weird"). Describe what was decided or shared, never characterise it.
+- Each project bullet may cite at most 2 messages (same citation + link logic as /ask); pick the most relevant. The off-topic bullet has no citations.
+- **Send privately** if `can_dm`; otherwise reply in the group. The keyword `here` (`/catchup here`, `/catchup 2d here`, `/catchup here 2d`) posts the summary in the group instead; any other input shows usage. When posted in the group, "Needs your input" must name the requester, e.g. "Needs Raeann's input:". Update only the requester's `last_catchup_at`, whichever way it is sent.
 
 ### 7.9 Plan (stretch)
 - `/plan` as a reply to a PDF the bot can see, or as a caption on an uploaded PDF. Extract text with `pypdf` (cap ~60,000 chars).

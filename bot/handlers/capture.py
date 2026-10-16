@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from telegram import (
     InlineKeyboardButton,
@@ -34,6 +35,7 @@ async def store_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if message is None or message.text is None or chat is None or user is None:
         return
 
+    db_started = time.perf_counter()
     with SessionLocal() as session:
         db_chat = get_or_create_chat(session, chat.id, chat.title)
         db_user = get_or_create_user(
@@ -52,13 +54,22 @@ async def store_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         session.commit()
         chat_db_id = db_chat.id
         owner_db_id = db_user.id
+    stored = time.perf_counter()
 
     text = message.text
     if len(text.strip()) < MIN_TEXT_LENGTH:
+        logger.info("capture: db %.2fs", stored - db_started)
         return
 
     sender_name = user.first_name or user.username or "Unknown"
+    llm_started = time.perf_counter()
     commitment = await classify_commitment(text, sender_name, now_utc())
+    classified = time.perf_counter()
+    logger.info(
+        "capture: db %.2fs, llm %.2fs",
+        stored - db_started,
+        classified - llm_started,
+    )
     if (
         commitment is None
         or not commitment.is_commitment

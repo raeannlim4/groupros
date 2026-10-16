@@ -27,6 +27,12 @@ LLM_BASE_URL = _require("LLM_BASE_URL")
 LLM_API_KEY = _require("LLM_API_KEY")
 CAPTURE_MODEL = _require("CAPTURE_MODEL")
 ASK_MODEL = _require("ASK_MODEL")
+# "off" disables the model's reasoning/thinking (OpenRouter `reasoning` param).
+LLM_REASONING = os.environ.get("LLM_REASONING", "off")
+# OpenRouter provider routing, e.g. "throughput" prefers faster providers.
+LLM_PROVIDER_SORT = os.environ.get("LLM_PROVIDER_SORT", "throughput")
+CAPTURE_MAX_TOKENS = int(os.environ.get("CAPTURE_MAX_TOKENS", "200"))
+ASK_MAX_TOKENS = int(os.environ.get("ASK_MAX_TOKENS", "600"))
 
 EMBEDDING_BASE_URL = _require("EMBEDDING_BASE_URL")
 EMBEDDING_API_KEY = _require("EMBEDDING_API_KEY")

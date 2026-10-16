@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import logging
+import time
 from datetime import timedelta
 
 from sqlalchemy import delete, select
@@ -411,7 +412,9 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     sender_name = user.first_name or user.username or "Unknown"
+    llm_started = time.perf_counter()
     parsed = await parse_task(text, now_utc())
+    parsed_at = time.perf_counter()
     if parsed is None or not parsed.task.strip():
         title = text
         due = None
@@ -419,6 +422,7 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         title = parsed.task.strip()
         due = parsed.due
 
+    db_started = time.perf_counter()
     with SessionLocal() as session:
         db_chat = get_or_create_chat(session, chat.id, chat.title)
         db_user = get_or_create_user(session, user.id, user.username, user.first_name)
@@ -436,6 +440,11 @@ async def add_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             create_reminders(session, task)
         session.commit()
         task_id = task.id
+    logger.info(
+        "addtask: llm %.2fs, db %.2fs",
+        parsed_at - llm_started,
+        time.perf_counter() - db_started,
+    )
 
     if unclaimed:
         await message.reply_text(

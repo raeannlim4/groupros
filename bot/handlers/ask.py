@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import logging
 import re
+import time
 
 from sqlalchemy import func, select
 from telegram import Update
@@ -112,8 +113,11 @@ def render_answer(
 async def answer_for_chat(
     chat_db_id: int, telegram_chat_id: int, question: str
 ) -> str:
+    started = time.perf_counter()
     embedding = (await embed_texts([question]))[0]
+    embedded = time.perf_counter()
     results = await search_chunks(chat_db_id, embedding)
+    retrieved = time.perf_counter()
     logger.debug(
         "ASK distances chat %s: %s",
         chat_db_id,
@@ -127,6 +131,12 @@ async def answer_for_chat(
     if not has_decisions and (
         best_distance is None or best_distance > config.ASK_MAX_DISTANCE
     ):
+        logger.info(
+            "ask: embed %.2fs, retrieve %.2fs, total %.2fs (no llm)",
+            embedded - started,
+            retrieved - embedded,
+            retrieved - started,
+        )
         return NOT_FOUND
 
     with SessionLocal() as session:
@@ -136,6 +146,14 @@ async def answer_for_chat(
     logger.debug("ASK context for chat %s:\n%s", chat_db_id, context_text)
 
     answer = await answer_question(question, context_text)
+    answered = time.perf_counter()
+    logger.info(
+        "ask: embed %.2fs, retrieve %.2fs, llm %.2fs, total %.2fs",
+        embedded - started,
+        retrieved - embedded,
+        answered - retrieved,
+        answered - started,
+    )
     rendered, valid = render_answer(answer, telegram_chat_id, sources)
     if valid == 0:
         return NOT_FOUND

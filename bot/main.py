@@ -47,11 +47,13 @@ def main() -> None:
     application = (
         Application.builder()
         .token(config.TELEGRAM_BOT_TOKEN)
+        .concurrent_updates(8)
         .post_init(post_init)
         .build()
     )
     application.add_handler(CommandHandler("start", onboarding.start))
     application.add_handler(CommandHandler("help", onboarding.help_command))
+    application.add_handler(CommandHandler("forget", onboarding.forget))
     application.add_handler(CommandHandler("tasks", tasks.task_board))
     application.add_handler(CommandHandler("addtask", tasks.add_task))
     application.add_handler(CommandHandler("mytasks", tasks.my_tasks))
@@ -94,6 +96,12 @@ def main() -> None:
     application.add_handler(
         CallbackQueryHandler(
             decisions.handle_decision_callback, pattern=r"^dec_rm:"
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            onboarding.handle_forget_callback,
+            pattern=r"^(forget_confirm|forget_cancel):",
         )
     )
     application.add_handler(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 import re
 from datetime import datetime, timedelta
@@ -23,7 +24,7 @@ from bot.timeutil import format_absolute, format_compact, now_utc
 
 logger = logging.getLogger(__name__)
 
-USAGE = "Usage: /catchup [window, e.g. 2d]"
+USAGE = "Usage: /catchup [here] [window, e.g. 2d]"
 PRIVATE_REPLY = "Use /catchup in a group chat."
 EMPTY = "Not much happened, you're up to date."
 FAILED = "Sorry, something went wrong, try again."
@@ -40,6 +41,9 @@ UNITS = {
     "d": 86400, "day": 86400, "days": 86400,
     "w": 604800, "wk": 604800, "wks": 604800, "week": 604800, "weeks": 604800,
 }
+BULLET_RE = re.compile(r"^\s*[-•]\s*")
+OFFTOPIC_RE = re.compile(r"^offtopic:\s*", re.IGNORECASE)
+NEEDS_RE = re.compile(r"needs your input", re.IGNORECASE)
 
 
 def _parse_window(arg: str) -> timedelta | None:
@@ -51,6 +55,20 @@ def _parse_window(arg: str) -> timedelta | None:
     if amount <= 0 or unit not in UNITS:
         return None
     return timedelta(seconds=amount * UNITS[unit])
+
+
+def _parse_args(arg: str) -> tuple[timedelta, bool] | None:
+    """Return (window, here). `here` posts in the group. None means bad input."""
+    tokens = arg.split()
+    here = "here" in tokens
+    remaining = " ".join(token for token in tokens if token != "here").strip()
+    window = DEFAULT_WINDOW
+    if remaining:
+        parsed = _parse_window(remaining)
+        if parsed is None:
+            return None
+        window = parsed
+    return window, here
 
 
 def _user_name(user: User | None) -> str:
@@ -164,8 +182,40 @@ def _mark_catchup(telegram_chat_id: int, telegram_user_id: int, when: datetime) 
             session.commit()
 
 
-async def _deliver(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
-    """DM the text when the user can receive DMs, otherwise reply in the group."""
+def _render_bullets(
+    summary: str, chat_id: int, sources: dict, reader_name: str, in_group: bool
+) -> list[str]:
+    """Turn the raw LLM summary into display bullets with citations rendered."""
+    bullets: list[str] = []
+    name = html.escape(reader_name, quote=False)
+    for line in summary.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        line = BULLET_RE.sub("", line).strip()
+        if not line:
+            continue
+        offtopic = OFFTOPIC_RE.match(line)
+        if offtopic:
+            line = line[offtopic.end():].strip()
+        rendered, _valid = render_answer(line, chat_id, sources)
+        if not rendered:
+            continue
+        if in_group:
+            rendered = NEEDS_RE.sub(f"Needs {name}'s input", rendered)
+        bullets.append(f"• {rendered}")
+        if len(bullets) >= MAX_BULLETS:
+            break
+    return bullets
+
+
+async def _deliver(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    in_group: bool = False,
+) -> None:
+    """DM the text when the user can receive DMs, unless in_group forces a reply."""
     message = update.effective_message
     user = update.effective_user
     if message is None or user is None:
@@ -177,7 +227,7 @@ async def _deliver(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str
         )
         can_dm = db_user.can_dm if db_user is not None else False
 
-    if can_dm:
+    if not in_group and can_dm:
         try:
             await context.bot.send_message(
                 chat_id=user.id, text=text, parse_mode=ParseMode.HTML
@@ -205,12 +255,13 @@ async def catchup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     arg = " ".join(context.args).strip()
     window = DEFAULT_WINDOW
+    here = False
     if arg:
-        parsed = _parse_window(arg)
-        if parsed is None:
+        parsed_args = _parse_args(arg)
+        if parsed_args is None:
             await message.reply_text(USAGE)
             return
-        window = parsed
+        window, here = parsed_args
 
     now = now_utc()
     reader_name = user.first_name or user.username or "there"
@@ -227,13 +278,16 @@ async def catchup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             window_start = member.last_catchup_at
         else:
             window_start = now - DEFAULT_WINDOW
+        can_dm = db_user.can_dm
         count, context_text, sources = _build_context(
             session, db_chat.id, window_start
         )
         session.commit()
 
+    in_group = here or not can_dm
+
     if count < MIN_MESSAGES:
-        await _deliver(update, context, EMPTY)
+        await _deliver(update, context, EMPTY, in_group=in_group)
         _mark_catchup(chat.id, user.id, now)
         return
 
@@ -244,23 +298,11 @@ async def catchup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await message.reply_text(FAILED)
         return
 
-    bullets: list[str] = []
-    valid_total = 0
-    for line in summary.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        rendered, valid = render_answer(line, chat.id, sources)
-        valid_total += valid
-        if valid:
-            bullets.append(rendered)
-        if len(bullets) >= MAX_BULLETS:
-            break
-
-    if valid_total == 0 or not bullets:
-        logger.warning("catchup produced no citable bullets for chat %s", chat.id)
+    bullets = _render_bullets(summary, chat.id, sources, reader_name, in_group)
+    if not bullets:
+        logger.warning("catchup produced no bullets for chat %s", chat.id)
         await message.reply_text(FAILED)
         return
 
-    await _deliver(update, context, "\n".join(bullets))
+    await _deliver(update, context, "\n".join(bullets), in_group=in_group)
     _mark_catchup(chat.id, user.id, now)

@@ -4,13 +4,14 @@ import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType, ParseMode
+from telegram.error import Forbidden
 from telegram.ext import ContextTypes
 
-from sqlalchemy import select
+from sqlalchemy import and_, delete, or_, select, update
 
 from bot import config
 from bot.db import SessionLocal, get_or_create_chat, get_or_create_user
-from bot.models import Chat
+from bot.models import Chat, Message, MessageChunk, User
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,9 @@ HELP_TEXT = (
     "/decide <text> – log a group decision\n"
     "/decisions – show recent group decisions\n"
     "/ask <question> – ask about past discussion\n"
-    "/catchup – summary of what you missed since your last catch-up\n"
-    "/catchup 2d – summary of the last 2 days (use any number of days, hours, minutes or weeks)\n"
+    "/catchup – what you missed, sent to you privately\n"
+    "/catchup 2d – last 2 days, privately (any number of days, hours, minutes or weeks)\n"
+    "/catchup here – post the summary in the group\n"
     "/forget – delete your data\n"
     "/help – show this message"
 )
@@ -66,6 +68,139 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     message = update.effective_message
     if message is not None:
         await message.reply_text(HELP_TEXT)
+
+
+FORGET_CONFIRM_TEXT = (
+    "This deletes every message I have stored from you in all your groups. "
+    "Tasks and decisions stay. This cannot be undone.\n\n"
+    "Delete your messages?"
+)
+FORGET_DONE_TEXT = "Done. Your stored messages have been deleted."
+FORGET_CANCELLED_TEXT = "Okay, nothing deleted."
+FORGET_NOTHING_TEXT = "I have no stored messages from you."
+
+
+def _forget_keyboard(telegram_user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "Yes, delete", callback_data=f"forget_confirm:{telegram_user_id}"
+                ),
+                InlineKeyboardButton(
+                    "Cancel", callback_data=f"forget_cancel:{telegram_user_id}"
+                ),
+            ]
+        ]
+    )
+
+
+async def forget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    chat = update.effective_chat
+    user = update.effective_user
+    if message is None or chat is None or user is None:
+        return
+
+    keyboard = _forget_keyboard(user.id)
+
+    if chat.type != ChatType.PRIVATE:
+        with SessionLocal() as session:
+            db_user = get_or_create_user(
+                session, user.id, user.username, user.first_name
+            )
+            can_dm = db_user.can_dm
+            session.commit()
+        if can_dm:
+            try:
+                await context.bot.send_message(
+                    chat_id=user.id,
+                    text=FORGET_CONFIRM_TEXT,
+                    reply_markup=keyboard,
+                )
+                return
+            except Forbidden:
+                logger.info("Cannot DM /forget prompt to %s; replying in group.", user.id)
+            except Exception:
+                logger.exception("Failed to DM /forget prompt to %s", user.id)
+
+    await message.reply_text(FORGET_CONFIRM_TEXT, reply_markup=keyboard)
+
+
+def _delete_user_messages(session, db_user: User) -> bool:
+    """Delete the user's messages and invalidate affected chunks."""
+    by_chat: dict[int, list[int]] = {}
+    for chat_id, message_id in session.execute(
+        select(Message.chat_id, Message.id).where(Message.user_id == db_user.id)
+    ):
+        by_chat.setdefault(chat_id, []).append(message_id)
+    if not by_chat:
+        return False
+
+    for chat_id, ids in by_chat.items():
+        low, high = min(ids), max(ids)
+        chunks = list(
+            session.scalars(
+                select(MessageChunk).where(
+                    MessageChunk.chat_id == chat_id,
+                    MessageChunk.first_message_id <= high,
+                    MessageChunk.last_message_id >= low,
+                )
+            )
+        )
+        ranges = [(chunk.first_message_id, chunk.last_message_id) for chunk in chunks]
+        for chunk in chunks:
+            session.delete(chunk)
+        session.flush()
+        if ranges:
+            conditions = [
+                and_(Message.chat_id == chat_id, Message.id >= lo, Message.id <= hi)
+                for lo, hi in ranges
+            ]
+            session.execute(
+                update(Message)
+                .where(or_(*conditions), Message.user_id != db_user.id)
+                .values(chunked=False)
+            )
+
+    session.execute(delete(Message).where(Message.user_id == db_user.id))
+    return True
+
+
+async def handle_forget_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+
+    action, _, raw_id = query.data.partition(":")
+    try:
+        target_user_id = int(raw_id)
+    except ValueError:
+        await query.answer()
+        return
+
+    if query.from_user.id != target_user_id:
+        await query.answer(
+            "Only the person who asked can do this.", show_alert=True
+        )
+        return
+
+    if action == "forget_cancel":
+        await query.edit_message_text(FORGET_CANCELLED_TEXT)
+        await query.answer()
+        return
+
+    with SessionLocal() as session:
+        db_user = session.scalar(
+            select(User).where(User.telegram_user_id == target_user_id)
+        )
+        deleted = _delete_user_messages(session, db_user) if db_user else False
+        session.commit()
+
+    await query.edit_message_text(FORGET_DONE_TEXT if deleted else FORGET_NOTHING_TEXT)
+    await query.answer()
 
 
 def _enable_button(bot_username: str | None) -> InlineKeyboardButton | None:
