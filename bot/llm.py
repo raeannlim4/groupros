@@ -451,17 +451,17 @@ BRIEF_SYSTEM_PROMPT = """\
 You read an assignment brief for a student project group and extract its key facts.
 
 Return JSON only, no prose and no code fences, in exactly this shape:
-{"final_deadline": {"value": "Friday 11 Oct 2026, 11:59pm", "date": "2026-10-11T23:59:00+08:00", "quote": "Final submission due Friday 11 October 2026 by 23:59."}, "presentation": {"value": "Week 12, in class, 10 minutes", "date": null, "quote": "Presentation in Week 12 (10 minutes)."}, "deliverables": [{"value": "Report — PDF, max 3000 words", "date": null, "quote": "Submit a report (PDF) of no more than 3000 words."}], "word_limit": {"value": "3000 words", "date": null, "quote": "no more than 3000 words"}, "group_size": {"value": "4 to 5 students", "date": null, "quote": "Groups of 4 to 5 students."}, "weighting": {"value": "40% of the final grade", "date": null, "quote": "This assignment is worth 40% of your final grade."}, "other_key_dates": [{"value": "Proposal due Week 8", "date": null, "quote": "Proposal due Week 8."}]}
+{"milestones": [{"name": "Proposal", "due_text": "Week 8", "due_date": null, "deliverables": [{"value": "One-page proposal", "date": null, "quote": "Proposal due Week 8."}], "quote": "Proposal due Week 8."}, {"name": "Final deadline", "due_text": "Friday 11 October 2026, 11:59pm", "due_date": "2026-10-11T23:59:00+08:00", "deliverables": [{"value": "Report — PDF, max 3000 words", "date": null, "quote": "Submit a report (PDF) of no more than 3000 words."}], "quote": "Final submission due Friday 11 October 2026 by 23:59."}], "word_limit": {"value": "3000 words", "date": null, "quote": "no more than 3000 words"}, "group_size": {"value": "4 to 5 students", "date": null, "quote": "Groups of 4 to 5 students."}, "weighting": {"value": "40% of the final grade", "date": null, "quote": "This assignment is worth 40% of your final grade."}}
 
 Rules:
-- Every fact has "value" (what it says, in your words), "date" (an ISO 8601 datetime with the local UTC offset, or null) and "quote" (the exact source sentence copied from the document).
-- "final_deadline" is the assignment's final submission deadline.
-- "presentation" is when and how long the presentation is; "date" is the presentation date when the document states one.
-- "deliverables" is what must be submitted, each with its format and any limits.
-- "word_limit", "group_size" and "weighting" are as stated.
-- "other_key_dates" holds the other important dates.
-- "date" MUST be null when the document gives a relative or teaching-week date (such as "Week 11") instead of a calendar date. Never guess a date.
-- "quote" MUST be copied exactly from the document so it can be found there. If a fact is not in the document, use null (or an empty list).
+- "milestones" lists every deadline in the brief, ordered earliest to latest. The final submission deadline is the LAST milestone.
+- A milestone is a deadline by which something must be submitted or presented. Its "name" is short (for example "Proposal", "Presentation", "Final deadline"), "due_text" is the deadline as written (for example "Week 8" or "Friday 11 October 2026, 11:59pm"), and "due_date" is an ISO 8601 datetime with the local UTC offset, or null.
+- Link each "deliverables" entry to the milestone it belongs to. A deliverable has "value" (what it is, with format and any limits), "date" and "quote".
+- For a presentation, put the presentation's deadline as the milestone and say in "name" or "due_text" whether it is live or recorded and its maximum length.
+- "word_limit", "group_size" and "weighting" each have "value", "date" and "quote".
+- Deadlines are ONLY dates by which something must be submitted or presented. Exclude advice ("start 3 weeks before the deadline"), post-project housekeeping ("after Week 18"), and teaching-team activities ("in Week 5 or 6 we will demo"). Do not create milestones for those.
+- "due_date" MUST be null when the document gives a relative or teaching-week date (such as "Week 11") instead of a calendar date. Never guess a date.
+- "quote" MUST be copied exactly from the document so it can be found there. If a milestone or fact is not in the document, leave it out.
 """
 
 
@@ -489,19 +489,19 @@ async def extract_brief(text: str, document_date: datetime) -> BriefFacts:
 
 
 PLAN_SYSTEM_PROMPT = """\
-You plan milestones for a student project group working towards a deadline.
-You get the final deadline, the assignment brief's facts (if any) and the group's existing open tasks.
+You plan tasks for a student project group working back from a milestone deadline.
+You get the milestone deadline, the milestone's details (if any) and the group's existing open tasks.
 
 Return JSON only, no prose and no code fences, in exactly this shape:
 {"milestones": [{"title": "Draft survey questions", "due": "2026-10-05T23:59:00+08:00"}]}
 
 Rules:
-- Generate 4 to 7 milestones that work backwards from the deadline, leaving at least one buffer day before the deadline.
-- "title" is a short, actionable milestone title.
+- Generate 4 to 7 tasks that work backwards from the milestone deadline, leaving at least one buffer day before it.
+- "title" is a short, actionable task title.
 - "due" is an ISO 8601 datetime with the local UTC offset. A day with no time means 23:59 that day.
-- Every milestone's date MUST be on or after today and on or before the deadline. Resolve relative dates using the current date provided.
-- Do NOT duplicate the existing open tasks; create new, distinct milestones.
-- Order the milestones from earliest to latest.
+- Every task's date MUST be on or after today and on or before the milestone deadline. Resolve relative dates using the current date provided.
+- Do NOT duplicate the existing open tasks; create new, distinct tasks.
+- Order the tasks from earliest to latest.
 """
 
 

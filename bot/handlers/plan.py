@@ -1,4 +1,4 @@
-"""``/plan`` — turn the brief's deadline into claimable milestones."""
+"""``/plan`` — turn the brief's milestones into claimable tasks."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType
 from telegram.ext import ContextTypes
 
-from bot.brief import KEY_FIELDS, BriefFacts, has_value
+from bot.brief import BriefFacts, BriefMilestone
 from bot.db import SessionLocal, get_or_create_chat, get_or_create_user
 from bot.llm import PlanMilestone, parse_task, plan_milestones
 from bot.models import ProjectBrief, Task
@@ -20,12 +20,15 @@ from bot.timeutil import format_absolute, now_utc, to_local
 logger = logging.getLogger(__name__)
 
 USAGE = (
-    "Usage: /plan  (uses the brief's final deadline)  or  /plan by <date>\n\n"
-    "Upload the assignment brief first with /brief so I know the deadline."
+    "Usage: /plan  (plans the brief's upcoming milestones)  or  /plan by <date>"
 )
 NO_DEADLINE = (
     "I need a calendar deadline to plan. Upload the brief with /brief, or use "
     "/plan by <date>."
+)
+NO_MILESTONES = (
+    "Your saved brief doesn't list any deadlines to plan. Send a clearer brief "
+    "with /brief, or use /plan by <date>."
 )
 NO_PLAN = "Sorry, I couldn't build a plan from the brief. Try /plan by <date>."
 PRIVATE = "Use /plan in a group chat."
@@ -41,21 +44,6 @@ class _Plan:
 _plans: dict[tuple[int, int], _Plan] = {}
 
 
-def _brief_text(facts: BriefFacts) -> str:
-    lines: list[str] = []
-    for key, label in KEY_FIELDS:
-        fact = getattr(facts, key)
-        if has_value(fact):
-            lines.append(f"{label}: {fact.value}")
-    for deliverable in facts.deliverables:
-        if deliverable.value.strip():
-            lines.append(f"Deliverable: {deliverable.value}")
-    for other in facts.other_key_dates:
-        if other.value.strip():
-            lines.append(f"Key date: {other.value}")
-    return "\n".join(lines)
-
-
 def _existing_titles(chat_db_id: int) -> list[str]:
     with SessionLocal() as session:
         return list(
@@ -67,14 +55,24 @@ def _existing_titles(chat_db_id: int) -> list[str]:
         )
 
 
-def _render_plan(milestones: list[PlanMilestone], deadline) -> str:
-    lines = [f"🗺 Plan to {format_absolute(deadline)}"]
-    for milestone in milestones:
-        due = f" — due {format_absolute(milestone.due)}" if milestone.due else ""
-        lines.append(f"• {html.escape(milestone.title)} {due}".rstrip())
-    lines.append("")
-    lines.append("Create them as unclaimed tasks the group can claim?")
+def _milestone_brief_text(milestone: BriefMilestone) -> str:
+    lines = [f"Milestone: {milestone.name.strip() or 'milestone'}"]
+    if milestone.due_text.strip():
+        lines.append(f"Deadline as written: {milestone.due_text.strip()}")
+    for deliverable in milestone.deliverables:
+        if deliverable.value.strip():
+            lines.append(f"Deliverable: {deliverable.value.strip()}")
     return "\n".join(lines)
+
+
+def _teaching_weeks_message(facts: BriefFacts) -> str:
+    texts = [m.due_text.strip() or m.name.strip() for m in facts.milestones]
+    texts = [text for text in texts if text]
+    listing = "; ".join(texts) if texts else "no dates"
+    return (
+        "Your brief gives deadlines as teaching weeks, not dates: "
+        f"{listing}. Set one with /brief set deadline <date>, then run /plan again."
+    )
 
 
 def filter_milestones(
@@ -83,7 +81,7 @@ def filter_milestones(
     end_date,
     existing: list[str],
 ) -> list[PlanMilestone]:
-    """Keep milestones within [start_date, end_date], dropping duplicates."""
+    """Keep tasks within [start_date, end_date], dropping duplicates."""
     seen = {title.strip().lower() for title in existing}
     valid: list[PlanMilestone] = []
     for milestone in milestones:
@@ -101,6 +99,66 @@ def filter_milestones(
     return valid
 
 
+def _render_plan(
+    heading: str, groups: list[tuple[str, list[PlanMilestone]]]
+) -> str:
+    lines = [heading]
+    for label, items in groups:
+        if label:
+            lines.append(f"{html.escape(label)}:")
+        for item in items:
+            due = f" — due {format_absolute(item.due)}" if item.due else ""
+            lines.append(f"• {html.escape(item.title.strip())}{due}")
+    lines.append("")
+    lines.append("Create them as unclaimed tasks the group can claim?")
+    return "\n".join(lines)
+
+
+async def _send_plan(
+    message,
+    chat_id: int,
+    chat_db_id: int,
+    heading: str,
+    groups: list[tuple[str, list[PlanMilestone]]],
+    skipped: list[str],
+) -> None:
+    flat = [item for _label, items in groups for item in items]
+    body = list(skipped)
+    if skipped:
+        body.append("")
+    body.append(_render_plan(heading, groups))
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "Create as unclaimed tasks", callback_data="plan_create:0"
+                ),
+                InlineKeyboardButton("Cancel", callback_data="plan_cancel:0"),
+            ]
+        ]
+    )
+    sent = await message.reply_text("\n".join(body), reply_markup=keyboard)
+    _plans[(chat_id, sent.message_id)] = _Plan(chat_db_id, flat)
+
+
+async def _generate(
+    message, chat, chat_db_id: int, now, deadline, brief_text: str
+):
+    """Generate one plan to a single deadline. Returns groups or None on error."""
+    today = to_local(now).date()
+    existing = _existing_titles(chat_db_id)
+    try:
+        items = await plan_milestones(deadline, brief_text, existing, now)
+    except Exception:
+        logger.exception("plan generation failed for chat %s", chat.id)
+        await message.reply_text(FAILED)
+        return None
+    items = filter_milestones(
+        items, today, to_local(deadline).date(), existing
+    )
+    return items
+
+
 async def plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
     chat = update.effective_chat
@@ -114,13 +172,12 @@ async def plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     now = now_utc()
     args = " ".join(context.args or []).strip()
 
-    deadline = None
+    override = None
     if args:
-        if args.lower().startswith("by "):
-            value = args[3:].strip()
-        else:
+        if not args.lower().startswith("by "):
             await message.reply_text(USAGE)
             return
+        value = args[3:].strip()
         if not value:
             await message.reply_text(USAGE)
             return
@@ -130,8 +187,8 @@ async def plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.exception("plan failed to parse deadline for chat %s", chat.id)
             await message.reply_text(FAILED)
             return
-        deadline = parsed.due if parsed is not None else None
-        if deadline is None:
+        override = parsed.due if parsed is not None else None
+        if override is None:
             await message.reply_text(USAGE)
             return
 
@@ -149,40 +206,76 @@ async def plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             else None
         )
 
-    brief_text = _brief_text(facts) if facts is not None else ""
-    if deadline is None and facts is not None and has_value(facts.final_deadline):
-        deadline = facts.final_deadline.date
-    if deadline is None:
+    if override is not None:
+        items = await _generate(
+            message, chat, chat_db_id, now, override, "(no brief uploaded)"
+        )
+        if items is None:
+            return
+        if not items:
+            await message.reply_text(NO_PLAN)
+            return
+        await _send_plan(
+            message,
+            chat.id,
+            chat_db_id,
+            f"🗺 Plan to {format_absolute(override)}",
+            [("", items)],
+            [],
+        )
+        return
+
+    if facts is None or not facts.milestones:
+        if facts is not None:
+            await message.reply_text(NO_MILESTONES)
+            return
         await message.reply_text(NO_DEADLINE)
         return
 
-    existing = _existing_titles(chat_db_id)
-    try:
-        milestones = await plan_milestones(deadline, brief_text, existing, now)
-    except Exception:
-        logger.exception("plan generation failed for chat %s", chat.id)
-        await message.reply_text(FAILED)
+    today = to_local(now).date()
+    future = [
+        m
+        for m in facts.milestones
+        if m.due_date and to_local(m.due_date).date() >= today
+    ]
+    past = [
+        m
+        for m in facts.milestones
+        if m.due_date and to_local(m.due_date).date() < today
+    ]
+
+    if not future:
+        await message.reply_text(_teaching_weeks_message(facts))
         return
 
-    milestones = filter_milestones(
-        milestones, to_local(now).date(), to_local(deadline).date(), existing
-    )
-    if not milestones:
+    all_titles = _existing_titles(chat_db_id)
+    groups: list[tuple[str, list[PlanMilestone]]] = []
+    for milestone in future:
+        brief_text = _milestone_brief_text(milestone)
+        try:
+            items = await plan_milestones(
+                milestone.due_date, brief_text, all_titles, now
+            )
+        except Exception:
+            logger.exception("plan generation failed for chat %s", chat.id)
+            await message.reply_text(FAILED)
+            return
+        items = filter_milestones(
+            items, today, to_local(milestone.due_date).date(), all_titles
+        )
+        all_titles.extend(item.title.strip() for item in items)
+        if items:
+            groups.append((milestone.name.strip() or "Milestone", items))
+
+    if not groups:
         await message.reply_text(NO_PLAN)
         return
 
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "Create as unclaimed tasks", callback_data="plan_create:0"
-                ),
-                InlineKeyboardButton("Cancel", callback_data="plan_cancel:0"),
-            ]
-        ]
-    )
-    sent = await message.reply_text(_render_plan(milestones, deadline), reply_markup=keyboard)
-    _plans[(chat.id, sent.message_id)] = _Plan(chat_db_id, milestones)
+    skipped = [
+        f"Skipping {m.name.strip() or 'milestone'} milestone — already past"
+        for m in past
+    ]
+    await _send_plan(message, chat.id, chat_db_id, "🗺 Plan", groups, skipped)
 
 
 async def handle_plan_callback(

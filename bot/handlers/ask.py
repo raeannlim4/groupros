@@ -11,7 +11,7 @@ from telegram.constants import ChatType, ParseMode
 from telegram.ext import ContextTypes
 
 from bot import config, links
-from bot.brief import KEY_FIELDS, BriefFacts
+from bot.brief import SCALAR_FIELDS, BriefFacts
 from bot.db import SessionLocal, get_or_create_chat, get_or_create_user
 from bot.embeddings import embed_texts
 from bot.llm import answer_question
@@ -59,18 +59,21 @@ def _brief_part(session, chat_id: int, sources: dict) -> str | None:
         return None
     facts = BriefFacts.model_validate(brief.facts or {})
     lines = ["PROJECT BRIEF (authoritative facts about the assignment):"]
-    for key, label in KEY_FIELDS:
+    for milestone in facts.milestones:
+        name = milestone.name.strip() or "Milestone"
+        if milestone.due_date:
+            when = format_absolute(milestone.due_date)
+        else:
+            when = milestone.due_text.strip() or "no date"
+        lines.append(f"- {name} — due {when} [[brief]]")
+        for deliverable in milestone.deliverables:
+            if deliverable.value.strip():
+                lines.append(f"  - Deliverable: {deliverable.value} [[brief]]")
+    for key, label in SCALAR_FIELDS:
         fact = getattr(facts, key)
         if fact is not None and fact.value.strip():
             date = f" ({format_absolute(fact.date)})" if fact.date else ""
             lines.append(f"- {label}: {fact.value}{date} [[brief]]")
-    for deliverable in facts.deliverables:
-        if deliverable.value.strip():
-            lines.append(f"- Deliverable: {deliverable.value} [[brief]]")
-    for other in facts.other_key_dates:
-        if other.value.strip():
-            date = f" ({format_absolute(other.date)})" if other.date else ""
-            lines.append(f"- Key date: {other.value}{date} [[brief]]")
     if len(lines) == 1:
         return None
     sources["brief"] = None

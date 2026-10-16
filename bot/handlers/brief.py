@@ -12,8 +12,11 @@ from telegram.ext import ContextTypes
 
 from bot import documents
 from bot.brief import (
+    SCALAR_FIELDS,
     BriefFact,
     BriefFacts,
+    BriefMilestone,
+    find_milestone,
     ground_facts,
     has_value,
     missing_labels,
@@ -34,18 +37,16 @@ USAGE = (
     "Send me the assignment brief and I'll save its key facts.\n\n"
     "Attach a .pdf, .docx or .txt file with the caption /brief, reply /brief to "
     "a document or a text message, or send /brief followed by the text.\n\n"
-    "See the saved brief with /brief, or override a date with "
-    "/brief set deadline <date> or /brief set presentation <date>."
+    "See the saved brief with /brief, or set a milestone date with "
+    "/brief set <milestone> <date> (use \"deadline\" for the final milestone)."
 )
-SET_USAGE = "Usage: /brief set deadline <date>  or  /brief set presentation <date>"
+SET_USAGE = (
+    "Usage: /brief set <milestone> <date>\n"
+    "Use the milestone name from the brief, or \"deadline\" for the last one."
+)
 PRIVATE = "Use /brief in a group chat."
 FAILED = "Sorry, something went wrong, try again."
 TIMEOUT = "Reading the brief took too long. Try again, or send a smaller file."
-SET_FIELDS = {
-    "deadline": "final_deadline",
-    "final_deadline": "final_deadline",
-    "presentation": "presentation",
-}
 
 
 def _name(user: User | None) -> str:
@@ -61,33 +62,32 @@ def _fact_html(fact: BriefFact) -> str:
     return value
 
 
-def _deadline_html(fact: BriefFact) -> str:
-    if fact.date:
-        return format_absolute(fact.date)
-    return html.escape(fact.value)
+def _milestone_when(milestone: BriefMilestone) -> str:
+    if milestone.due_date:
+        return format_absolute(milestone.due_date)
+    if milestone.due_text:
+        return html.escape(milestone.due_text)
+    return "no date"
 
 
 def render_facts(facts: BriefFacts, filename: str | None, uploader_name: str) -> str:
     source = html.escape(filename) if filename else "pasted text"
     lines = [f"📋 Assignment brief ({source})"]
-    if has_value(facts.final_deadline):
-        lines.append(f"📅 Final deadline: {_deadline_html(facts.final_deadline)}")
-    if has_value(facts.presentation):
-        lines.append(f"🎤 Presentation: {_fact_html(facts.presentation)}")
-    deliverables = [d for d in facts.deliverables if d.value.strip()]
-    if deliverables:
-        lines.append("📦 Deliverables:")
-        lines.extend(f"• {_fact_html(d)}" for d in deliverables)
-    if has_value(facts.weighting):
-        lines.append(f"⚖️ Weighting: {_fact_html(facts.weighting)}")
-    if has_value(facts.word_limit):
-        lines.append(f"📝 Word limit: {_fact_html(facts.word_limit)}")
-    if has_value(facts.group_size):
-        lines.append(f"👥 Group size: {_fact_html(facts.group_size)}")
-    other = [d for d in facts.other_key_dates if d.value.strip()]
-    if other:
-        lines.append("🗓 Other key dates:")
-        lines.extend(f"• {_fact_html(d)}" for d in other)
+    milestones = [
+        m for m in facts.milestones if m.name.strip() or m.due_text.strip()
+    ]
+    if milestones:
+        lines.append("🗓 Milestones:")
+        for milestone in milestones:
+            name = html.escape(milestone.name.strip() or "Milestone")
+            lines.append(f"• {name} — {_milestone_when(milestone)}")
+            for deliverable in milestone.deliverables:
+                if deliverable.value.strip():
+                    lines.append(f"   ↳ {_fact_html(deliverable)}")
+    for key, label in SCALAR_FIELDS:
+        fact = getattr(facts, key)
+        if has_value(fact):
+            lines.append(f"• {label}: {_fact_html(fact)}")
     missing = missing_labels(facts)
     if missing:
         lines.append("")
@@ -159,7 +159,9 @@ async def _show_saved(message, chat_db_id: int) -> None:
     )
 
 
-async def _handle_set(update: Update, context: ContextTypes.DEFAULT_TYPE, args: str) -> None:
+async def _handle_set(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, args: str
+) -> None:
     message = update.effective_message
     chat = update.effective_chat
     user = update.effective_user
@@ -167,10 +169,7 @@ async def _handle_set(update: Update, context: ContextTypes.DEFAULT_TYPE, args: 
     if len(tokens) < 3 or not tokens[2].strip():
         await message.reply_text(SET_USAGE)
         return
-    key = SET_FIELDS.get(tokens[1].lower())
-    if key is None:
-        await message.reply_text(SET_USAGE)
-        return
+    target = tokens[1].strip()
     value = tokens[2].strip()
 
     try:
@@ -194,7 +193,11 @@ async def _handle_set(update: Update, context: ContextTypes.DEFAULT_TYPE, args: 
             if brief is not None
             else BriefFacts()
         )
-        setattr(facts, key, BriefFact(value=value, date=due))
+        milestone = find_milestone(facts, target)
+        if milestone is None:
+            await message.reply_text(SET_USAGE)
+            return
+        milestone.due_date = due
         payload = facts.model_dump(mode="json")
         if brief is None:
             brief = ProjectBrief(
@@ -206,7 +209,7 @@ async def _handle_set(update: Update, context: ContextTypes.DEFAULT_TYPE, args: 
             brief.uploaded_by_user_id = db_user.id
         session.commit()
 
-    label = "deadline" if key == "final_deadline" else "presentation"
+    label = milestone.name.strip() or "milestone"
     shown = format_absolute(due) if due else value
     name = user.first_name or user.username or "Someone"
     await message.reply_text(f"✅ Updated {label} to {shown} — by {name}.")
