@@ -18,6 +18,7 @@ from bot.db import (
     get_or_create_chat_member,
     get_or_create_user,
 )
+from bot.files import FileDownloadError, download_file
 from bot.grounding import normalise_for_grounding
 from bot.handlers.reminders import create_reminders
 from bot.llm import (
@@ -296,10 +297,9 @@ async def _read_source(update: Update, context: ContextTypes.DEFAULT_TYPE):
             raise TranscriptError(UNSUPPORTED)
         if document.file_size and document.file_size > MAX_FILE_BYTES:
             raise TranscriptError(_too_long_message(document.file_size // 6))
-        tg_file = await context.bot.get_file(document.file_id)
-        data = await tg_file.download_as_bytearray()
+        data = await download_file(context, document.file_id)
         try:
-            text = bytes(data).decode("utf-8")
+            text = data.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise TranscriptError(DECODE_ERROR) from exc
         return text, source_date, name.endswith(".vtt")
@@ -323,6 +323,9 @@ async def meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         source = await _read_source(update, context)
     except TranscriptError as exc:
         await message.reply_text(str(exc))
+        return
+    except FileDownloadError as exc:
+        await message.reply_text(exc.message)
         return
     except Exception:
         logger.exception("Failed to read meeting transcript")

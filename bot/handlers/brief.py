@@ -22,6 +22,7 @@ from bot.brief import (
     missing_labels,
 )
 from bot.db import SessionLocal, get_or_create_chat, get_or_create_user
+from bot.files import FileDownloadError, download_file
 from bot.llm import (
     BriefTimeoutError,
     BriefTooLongError,
@@ -111,9 +112,8 @@ async def _read_source(update: Update, context: ContextTypes.DEFAULT_TYPE, args:
         name = document.file_name or ""
         if document.file_size and document.file_size > documents.MAX_FILE_BYTES:
             raise documents.DocumentError(documents.too_long(document.file_size))
-        tg_file = await context.bot.get_file(document.file_id)
-        data = await tg_file.download_as_bytearray()
-        text = documents.extract_text(name, bytes(data))
+        data = await download_file(context, document.file_id)
+        text = documents.extract_text(name, data)
         return text, source_date, name
     if args:
         return documents.check_text(args), message.date, None
@@ -242,6 +242,9 @@ async def brief(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         source = await _read_source(update, context, args)
     except documents.DocumentError as exc:
+        await message.reply_text(exc.message)
+        return
+    except FileDownloadError as exc:
         await message.reply_text(exc.message)
         return
     except Exception:
