@@ -19,6 +19,7 @@ from bot.handlers import (
     capture,
     catchup,
     decisions,
+    meeting,
     onboarding,
     reminders,
     tasks,
@@ -61,6 +62,15 @@ def main() -> None:
     application.add_handler(CommandHandler("decisions", decisions.decisions))
     application.add_handler(CommandHandler("ask", ask.ask))
     application.add_handler(CommandHandler("catchup", catchup.catchup))
+    application.add_handler(CommandHandler("meeting", meeting.meeting))
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS
+            & filters.CaptionRegex(r"^/meeting(?:@\w+)?(?:\s|$)")
+            & filters.Document.ALL,
+            meeting.meeting,
+        )
+    )
     application.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, onboarding.bot_added)
     )
@@ -108,6 +118,11 @@ def main() -> None:
         CallbackQueryHandler(
             reminders.handle_reminder_callback,
             pattern=r"^(rem_ontrack|rem_more|rem_pick|rem_day|rem_plus1|rem_plus2|rem_plus7|rem_tell_yes|rem_tell_no):",
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            meeting.handle_meeting_callback, pattern=r"^(mtg_log|mtg_add):"
         )
     )
     application.add_handler(

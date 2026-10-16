@@ -15,12 +15,10 @@ The bot sits in a group chat and handles coordination nobody wants to do.
 **Memory (week 2):**
 5. **Ask**: `/ask <question>` answers questions about past discussion using RAG, with links to source messages.
 6. **Catch-up**: `/catchup` privately summarises what you missed.
+7. **Meeting minutes**: `/meeting` on a Zoom transcript (`.vtt`) or plain text posts a summary of the discussion — decisions and action items — with buttons to log decisions and add tasks.
 
 **Built in n8n, not Python (week 2):**
-7. **Weekly report**: every Sunday evening, posts completed tasks, upcoming deadlines and decisions.
-
-**Stretch (only if everything above works):**
-8. **Assignment breakdown**: `/plan` on an uploaded PDF brief suggests milestones as unclaimed tasks.
+8. **Weekly report**: every Sunday evening, posts completed tasks, upcoming deadlines and decisions.
 
 Core principle: **the AI suggests, humans decide.** The bot never creates, changes or deletes a task without a human tapping a button.
 
@@ -73,8 +71,15 @@ LLM_BASE_URL=
 LLM_API_KEY=
 # Small, fast, cheap model (runs on most messages)
 CAPTURE_MODEL=
-# Stronger model (/ask, /catchup, /plan)
+# Stronger model (/ask, /catchup, /meeting)
 ASK_MODEL=
+# Disable model reasoning for speed (set to `off` to skip it; leave blank to keep default)
+LLM_REASONING=
+# Ask the provider to sort by throughput (set to `throughput`; leave blank to keep default)
+LLM_PROVIDER_SORT=
+# Max output tokens per call
+CAPTURE_MAX_TOKENS=200
+ASK_MAX_TOKENS=600
 
 # Embeddings (any OpenAI-compatible API; can be a different provider)
 EMBEDDING_BASE_URL=
@@ -96,7 +101,7 @@ bot/
   main.py  config.py  db.py  models.py
   llm.py             # ALL chat-model calls
   embeddings.py      # ALL embedding calls
-  timeutil.py  links.py
+  timeutil.py  links.py  vtt.py
   handlers/
     onboarding.py    # /start, bot added to group, /forget, /help
     capture.py       # store messages, task capture, confirm buttons
@@ -105,7 +110,7 @@ bot/
     reminders.py     # reminder job, DM buttons
     ask.py           # /ask
     catchup.py       # /catchup
-    plan.py          # /plan (stretch)
+    meeting.py       # /meeting (transcript summaries)
   rag/
     chunker.py       # chunking job
     retrieve.py      # vector search
@@ -202,10 +207,15 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 - Each project bullet may cite at most 2 messages (same citation + link logic as /ask); pick the most relevant. The off-topic bullet has no citations.
 - **Send privately** if `can_dm`; otherwise reply in the group. The keyword `here` (`/catchup here`, `/catchup 2d here`, `/catchup here 2d`) posts the summary in the group instead; any other input shows usage. When posted in the group, "Needs your input" must name the requester, e.g. "Needs Raeann's input:". Update only the requester's `last_catchup_at`, whichever way it is sent.
 
-### 7.9 Plan (stretch)
-- `/plan` as a reply to a PDF the bot can see, or as a caption on an uploaded PDF. Extract text with `pypdf` (cap ~60,000 chars).
-- LLM returns JSON milestones: `[{"title": "...", "due": "ISO datetime"}]`, using the final deadline in the brief and leaving a revision buffer.
-- Show the plan with `[Create as unclaimed tasks] [Cancel]`. On create, insert open tasks with `owner_user_id = NULL`.
+### 7.9 Meeting minutes (`/meeting`)
+- `/meeting` works in a group as the caption of a document, or as a reply to a document or a text message. Accepted inputs: `.vtt` (Zoom audio transcript), `.txt`, or plain text. With no input, show usage: the host downloads the transcript (`.vtt`) from Zoom → Recordings & Transcripts, then sends it to the group with `/meeting`.
+- Preprocess `.vtt`: drop the `WEBVTT` header, cue numbers and repeated timestamps; keep each cue's start time (`mm:ss` or `h:mm:ss`) and the speaker name when the line starts with `Name: `. Merge consecutive cues by the same speaker into one line formatted `[mm:ss] Name: text`. Cap the cleaned text at ~150,000 characters; if longer, reply that the transcript is too long.
+- The LLM returns JSON: `{"title", "duration_minutes", "attendees": [names], "topics": [...], "decisions": [{"text", "timestamp", "speaker"}], "action_items": [{"owner_name" or null, "task", "due" ISO or null, "timestamp"}], "open_questions": [...]}`. Same date rules and 120-day check as `/addtask`, relative to the meeting date (the file date, or today).
+- Grounding: drop any decision or action item whose timestamp is not in the cleaned transcript. If nothing at all survives, reply "I couldn't find clear decisions or action items in this transcript." and still show the topics.
+- Post in the group in the format: 📋 header with date and duration, 👥 attendees, Discussed, Decisions (with `(mm:ss, Speaker)`), Action items (with `(mm:ss)`), Open questions.
+- Each decision gets a `[📝 Log]` button (anyone can tap; logs via the Decision table; the button disappears or shows ✅ once logged).
+- Each action item gets a `[📌 Add task]` button. Match `owner_name` to a member of this chat by first name or username (case-insensitive). If matched, only that person can confirm (same alert pattern as capture). If unmatched or null, confirming creates an unclaimed task. Confirmed tasks get reminders as normal.
+- Store the posted minutes (not the transcript) as a bot Message row so the chunker indexes it for `/ask` and `/catchup`. Never store the transcript file contents anywhere.
 
 ## 8. n8n (built by me in the n8n UI, not by you)
 
@@ -247,7 +257,7 @@ The weekly report is an n8n workflow. Python's only job is to make the data easy
 5. Chunker job, embeddings, `/ask`, `seed_demo.py`, `eval_ask.py`.
 6. `/catchup`.
 7. `/forget` completeness, error handling review, tests, README.
-8. (Stretch) `/plan`.
+8. `/meeting`: transcript summaries with decisions and action items.
 
 ## Parking lot
 (Ideas go here first. Only build after the current phase works and is committed.)
@@ -256,3 +266,5 @@ The weekly report is an n8n workflow. Python's only job is to make the data easy
 - `/setname` for custom group nicknames.
 - Assign tasks to others with assignee confirmation.
 - Reply to a missed message with `/addtask` to capture it.
+- Fetch Zoom cloud recordings and transcripts via the Zoom API.
+- Speech-to-text for Telegram voice notes.

@@ -26,6 +26,7 @@ HELP_TEXT = (
     "/catchup – what you missed, sent to you privately\n"
     "/catchup 2d – last 2 days, privately (any number of days, hours, minutes or weeks)\n"
     "/catchup here – post the summary in the group\n"
+    "/meeting – summarise a transcript (.vtt, .txt or pasted text)\n"
     "/forget – delete your data\n"
     "/help – show this message"
 )
@@ -36,8 +37,9 @@ INTRO_TEXT = (
     "task. You can see the board any time with /tasks, get private deadline "
     "reminders by DM, and log decisions with /decide.\n\n"
     "I store group text messages, tasks and decisions. Messages are processed "
-    "by AI providers so I can do this. Anyone can delete their data anytime "
-    "with /forget."
+    "by AI providers so I can do this. Transcripts you send with /meeting are "
+    "processed by AI; only the summary is stored. Anyone can delete their data "
+    "anytime with /forget."
 )
 
 

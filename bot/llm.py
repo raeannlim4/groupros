@@ -287,3 +287,122 @@ async def catchup_summary(reader_name: str, context: str) -> str:
         ],
         config.ASK_MAX_TOKENS,
     )
+
+
+MEETING_SYSTEM_PROMPT = """\
+You summarise a meeting transcript for a student project group.
+The transcript is a cleaned Zoom transcript; each line looks like \
+"[mm:ss] Speaker: text" or "[h:mm:ss] Speaker: text", and some lines have no \
+speaker name.
+
+Return JSON only, no prose and no code fences, in exactly this shape:
+{"title": "Weekly sync", "duration_minutes": 45, "attendees": ["Raeann Lim", "Tan Wei"], "topics": ["survey", "timeline"], "decisions": [{"text": "Use Google Forms for the survey", "timestamp": "03:12", "speaker": "Raeann Lim"}], "action_items": [{"owner_name": "Tan Wei", "task": "draft the survey questions", "due": "2026-10-11T23:59:00+08:00", "timestamp": "05:40"}], "open_questions": ["Who sends the survey to the tutor?"]}
+
+Rules:
+- "title": a short title for the meeting.
+- "duration_minutes": the whole number of minutes from the first to the last \
+timestamp, or null.
+- "attendees": the speaker names that appear in the transcript.
+- "topics": short phrases for what the group discussed.
+- "decisions": things the group agreed. "text" is one short sentence. \
+"speaker" is the speaker on that line, or null. "timestamp" MUST be copied \
+exactly from a "[...]" in the transcript.
+- "action_items": tasks someone agreed to do. "owner_name" is that speaker's \
+name, or null if nobody was named. "task" is a short title. "timestamp" MUST be \
+copied exactly from a "[...]" in the transcript.
+- "due": an ISO 8601 datetime with the local UTC offset, or null. Resolve \
+relative dates using the meeting date provided. A day with no time means 23:59 \
+that day. A deadline more than 120 days after the meeting date is null.
+- "open_questions": questions raised but not answered.
+- Every "timestamp" must be copied exactly from the transcript. Never invent one.
+"""
+
+
+class MeetingDecision(BaseModel):
+    text: str = ""
+    timestamp: str = ""
+    speaker: str | None = None
+
+    @field_validator("text", "timestamp", mode="before")
+    @classmethod
+    def _none_to_empty(cls, value):
+        return value or ""
+
+    @field_validator("speaker", mode="before")
+    @classmethod
+    def _none_speaker(cls, value):
+        return value or None
+
+
+class MeetingActionItem(BaseModel):
+    owner_name: str | None = None
+    task: str = ""
+    due: datetime | None = None
+    timestamp: str = ""
+
+    @field_validator("task", "timestamp", mode="before")
+    @classmethod
+    def _none_to_empty(cls, value):
+        return value or ""
+
+    @field_validator("owner_name", "due", mode="before")
+    @classmethod
+    def _empty_to_none(cls, value):
+        return value or None
+
+
+class MeetingSummary(BaseModel):
+    title: str = ""
+    duration_minutes: int | None = None
+    attendees: list[str] = Field(default_factory=list)
+    topics: list[str] = Field(default_factory=list)
+    decisions: list[MeetingDecision] = Field(default_factory=list)
+    action_items: list[MeetingActionItem] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _title_none_to_empty(cls, value):
+        return value or ""
+
+    @field_validator("duration_minutes", mode="before")
+    @classmethod
+    def _duration_none(cls, value):
+        return value or None
+
+    @field_validator(
+        "attendees",
+        "topics",
+        "decisions",
+        "action_items",
+        "open_questions",
+        mode="before",
+    )
+    @classmethod
+    def _list_none_to_empty(cls, value):
+        return value or []
+
+
+async def summarize_meeting(
+    transcript: str, meeting_date: datetime
+) -> MeetingSummary | None:
+    user_prompt = (
+        f"Meeting date and time: {format_for_llm(meeting_date)}\n\n"
+        f"Transcript:\n{transcript}"
+    )
+    try:
+        raw = await _chat(
+            config.ASK_MODEL,
+            [
+                {"role": "system", "content": MEETING_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            config.ASK_MAX_TOKENS,
+        )
+        summary = MeetingSummary.model_validate_json(_strip_code_fences(raw))
+        for item in summary.action_items:
+            item.due = _sane_due(item.due, meeting_date)
+        return summary
+    except Exception:
+        logger.exception("summarize_meeting failed")
+        return None
