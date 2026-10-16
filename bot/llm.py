@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import openai
 import time
 from datetime import datetime, timedelta
 
@@ -87,6 +88,29 @@ def _sane_due(due: datetime | None, now: datetime) -> datetime | None:
     if due is not None and due > now + timedelta(days=MAX_DUE_DAYS):
         return None
     return due
+
+
+class MeetingTooLongError(Exception):
+    """The transcript was too large to send to the model."""
+
+
+class MeetingTimeoutError(Exception):
+    """The model took too long to summarise the transcript."""
+
+
+def _is_context_length_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in (
+            "context length",
+            "context_length",
+            "maximum context",
+            "too many tokens",
+            "reduce the length",
+            "token limit",
+        )
+    )
 
 
 def _extra_body() -> dict:
@@ -385,7 +409,7 @@ class MeetingSummary(BaseModel):
 
 async def summarize_meeting(
     transcript: str, meeting_date: datetime
-) -> MeetingSummary | None:
+) -> MeetingSummary:
     user_prompt = (
         f"Meeting date and time: {format_for_llm(meeting_date)}\n\n"
         f"Transcript:\n{transcript}"
@@ -399,10 +423,13 @@ async def summarize_meeting(
             ],
             config.ASK_MAX_TOKENS,
         )
-        summary = MeetingSummary.model_validate_json(_strip_code_fences(raw))
-        for item in summary.action_items:
-            item.due = _sane_due(item.due, meeting_date)
-        return summary
-    except Exception:
-        logger.exception("summarize_meeting failed")
-        return None
+    except openai.APITimeoutError as exc:
+        raise MeetingTimeoutError() from exc
+    except openai.BadRequestError as exc:
+        if _is_context_length_error(exc):
+            raise MeetingTooLongError() from exc
+        raise
+    summary = MeetingSummary.model_validate_json(_strip_code_fences(raw))
+    for item in summary.action_items:
+        item.due = _sane_due(item.due, meeting_date)
+    return summary

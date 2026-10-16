@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 
 MAX_TRANSCRIPT_CHARS = 150_000
+# Rough word budget shown in the "too long" reply (~6 characters per word).
+MAX_TRANSCRIPT_WORDS = MAX_TRANSCRIPT_CHARS // 6
 
 # "00:00:01.000 --> 00:00:04.000" (or "0:00:01.000", comma decimals, "MM:SS.mmm").
 _TS_LINE_RE = re.compile(
