@@ -14,6 +14,7 @@ from bot import config, links
 from bot.brief import SCALAR_FIELDS, BriefFacts
 from bot.db import SessionLocal, get_or_create_chat, get_or_create_user
 from bot.embeddings import embed_texts
+from bot.handlers.onboarding import take_link_tip
 from bot.llm import answer_question
 from bot.models import Decision, Message, ProjectBrief, User
 from bot.rag.retrieve import search_chunks
@@ -238,6 +239,9 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     try:
         rendered = await answer_for_chat(chat_db_id, telegram_chat_id, question)
+        tip = take_link_tip(chat_db_id, chat.type)
+        if tip:
+            rendered = f"{rendered}\n\n{tip}"
         await message.reply_text(rendered, parse_mode=ParseMode.HTML)
     except Exception:
         logger.exception("ask failed for chat %s", chat_db_id)

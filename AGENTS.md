@@ -131,7 +131,7 @@ requirements.txt  .env.example  README.md
 
 All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for display and for telling the LLM the current time. Telegram IDs are BigInteger.
 
-- **Chat**: id, telegram_chat_id (unique), title, weekly_report_enabled (bool, default True), created_at
+- **Chat**: id, telegram_chat_id (unique), title, weekly_report_enabled (bool, default True), link_tip_at (nullable), created_at
 - **User**: id, telegram_user_id (unique), username, first_name, can_dm (bool, default False), created_at
 - **ChatMember**: chat_id, user_id, last_catchup_at (nullable), nudged_for_dm (bool, default False). Unique (chat_id, user_id).
 - **Message**: id, chat_id, user_id, telegram_message_id, text, sent_at, chunked (bool, default False)
@@ -145,6 +145,11 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 
 ### 7.1 Onboarding
 - **Bot added to group**: post one intro message: what it does, what it stores (group text messages, tasks, decisions), that messages are processed by AI providers, and that `/forget` deletes your data. Buttons: "Enable private reminders" → `https://t.me/<bot_username>?start=enable`, and "Privacy info" → `PRIVACY_URL` if set.
+- **Upgrade tip (basic groups only)**: message links require a supergroup, so only ever show this tip when the chat type is `group` — never in a supergroup or a private chat. Record the last time the tip was shown on `Chat.link_tip_at`.
+  - Intro message: when the bot is added, add "💡 Tip for admins: turn on message links by setting\nGroup settings → Edit → Chat history for new members → Visible → Save".
+  - After an `/ask`, `/catchup` or `/decisions` reply posted in the group: append at most once per 24 hours per chat "🔗 Want clickable links to messages? An admin can turn them on: Group settings → Edit → Chat history for new members → Visible." (`Chat.link_tip_at` drives the 24-hour check).
+  - At the end of `/help` (and `/start` posted in a group) in a basic group: add the same one-line tip.
+- **Group upgrade (basic group → supergroup)**: when Telegram sends `migrate_to_chat_id` / `migrate_from_chat_id`, update the existing `Chat.telegram_chat_id` instead of creating a new row, so tasks, decisions, messages, chunks, briefs and reminders stay attached (they all reference `Chat.id`). Post once after a successful upgrade: "✅ Group upgraded. I can now link to messages in /ask, /catchup and /decisions."
 - **Group title**: keep `Chat.title` current — update it whenever the bot sees a message in that group and when Telegram sends a group-title-changed event.
 - **`/start` in private**: set `can_dm=True`, short welcome.
 - **`/forget`**: confirm with a button, then delete the user's Message rows, delete every MessageChunk whose range included any of their messages, and set `chunked=False` on remaining messages in those ranges so they get re-chunked. Reply privately if possible.
@@ -179,6 +184,7 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 - `/decide <text>` stores a Decision and replies `📝 Logged: <text>`. Without text, show usage.
 - `/decisions`: show the latest 10 decisions for this group, newest first, each line `• <text> — <name>, <date>` with a link to the original `/decide` message when `links.message_link` returns one (skip the link otherwise). A `🗑` button per decision (short label) lets only the person who logged it delete it; others get an alert. Deleting refreshes the list in place. If there are none, reply "No decisions logged yet. Use /decide <text> to log one."
 - Decisions are included in `/ask` context, `/catchup` and the weekly report.
+- In a basic group, append the upgrade tip (see 7.1) to the `/decisions` reply, at most once per 24 hours.
 
 ### 7.5 Reminders
 - When a task becomes `open` with a due date: create Reminders at **due − 24h** and **due − 3h**, skipping past times.
@@ -202,6 +208,7 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 - Post-process: replace each `[[id]]` via `links.message_link(chat_id, id)`, and `[[brief]]` with "(from brief)". **Drop any cited id that wasn't in the retrieved context.**
 - `links.message_link`: only for supergroups (chat id starts with `-100`): `https://t.me/c/<id without -100>/<message_id>`. Otherwise return None and show the date instead.
 - HTML parse mode, escape user text.
+- In a basic group, append the upgrade tip (see 7.1) to the reply, at most once per 24 hours.
 
 ### 7.8 Catch-up
 - `/catchup` in a group. Window: messages since that member's `last_catchup_at`; if null, last 24 hours. Optional argument like `/catchup 2d` overrides.
@@ -211,6 +218,7 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 - The prompt must forbid describing messages or people with judgmental or emotional labels (e.g. "romantic", "hostile", "rude", "weird"). Describe what was decided or shared, never characterise it.
 - Each project bullet may cite at most 2 messages (same citation + link logic as /ask); pick the most relevant. The off-topic bullet has no citations.
 - **Send privately** if `can_dm`; otherwise reply in the group. The keyword `here` (`/catchup here`, `/catchup 2d here`, `/catchup here 2d`) posts the summary in the group instead; any other input shows usage. When posted in the group, "Needs your input" must name the requester, e.g. "Needs Raeann's input:". Update only the requester's `last_catchup_at`, whichever way it is sent.
+- In a basic group, when the summary is posted in the group, append the upgrade tip (see 7.1) to it, at most once per 24 hours.
 
 ### 7.9 Meeting minutes (`/meeting`)
 - `/meeting` works in a group as the caption of a document, or as a reply to a document or a text message. Accepted inputs: `.vtt` (Zoom audio transcript), `.txt`, or plain text. With no input, show usage: the host downloads the transcript (`.vtt`) from Zoom → Recordings & Transcripts, then sends it to the group with `/meeting`.

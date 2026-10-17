@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType, ParseMode
@@ -12,6 +13,7 @@ from sqlalchemy import and_, delete, or_, select, update
 from bot import config
 from bot.db import SessionLocal, get_or_create_chat, get_or_create_user
 from bot.models import Chat, Message, MessageChunk, User
+from bot.timeutil import now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,50 @@ INTRO_TEXT = (
     "facts. Anyone can delete their data anytime with /forget."
 )
 
+LINK_TIP_ADMIN = (
+    "💡 Tip for admins: turn on message links by setting\n"
+    "Group settings → Edit → Chat history for new members → Visible → Save"
+)
+LINK_TIP_SHORT = (
+    "🔗 Want clickable links to messages? An admin can turn them on: "
+    "Group settings → Edit → Chat history for new members → Visible."
+)
+LINK_TIP_INTERVAL = timedelta(hours=24)
+UPGRADED_TEXT = (
+    "✅ Group upgraded. I can now link to messages in /ask, /catchup and "
+    "/decisions."
+)
+
+
+def help_text(chat_type: str | None) -> str:
+    """Help text, plus the link tip in a basic group."""
+    if chat_type == ChatType.GROUP:
+        return f"{HELP_TEXT}\n\n{LINK_TIP_SHORT}"
+    return HELP_TEXT
+
+
+def take_link_tip(chat_db_id: int, chat_type: str | None) -> str | None:
+    """The link tip for a basic group, at most once per 24 hours.
+
+    Returns None in supergroups and private chats. The 24-hour window is stored
+    on ``Chat.link_tip_at``.
+    """
+    if chat_type != ChatType.GROUP:
+        return None
+    now = now_utc()
+    with SessionLocal() as session:
+        chat = session.get(Chat, chat_db_id)
+        if chat is None:
+            return None
+        if (
+            chat.link_tip_at is not None
+            and now - chat.link_tip_at < LINK_TIP_INTERVAL
+        ):
+            return None
+        chat.link_tip_at = now
+        session.commit()
+    return LINK_TIP_SHORT
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
@@ -68,13 +114,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "your data."
         )
     else:
-        await message.reply_text(HELP_TEXT)
+        await message.reply_text(help_text(update.effective_chat.type))
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
+    chat = update.effective_chat
     if message is not None:
-        await message.reply_text(HELP_TEXT)
+        await message.reply_text(help_text(chat.type if chat is not None else None))
 
 
 FORGET_CONFIRM_TEXT = (
@@ -244,7 +291,11 @@ async def bot_added(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if rows:
         kwargs["reply_markup"] = InlineKeyboardMarkup(rows)
 
-    await message.reply_text(INTRO_TEXT, parse_mode=ParseMode.HTML, **kwargs)
+    text = INTRO_TEXT
+    if chat.type == ChatType.GROUP:
+        text = f"{INTRO_TEXT}\n\n{LINK_TIP_ADMIN}"
+
+    await message.reply_text(text, parse_mode=ParseMode.HTML, **kwargs)
     logger.info("Added to chat %s (%s).", chat.id, chat.title)
 
 
@@ -309,4 +360,9 @@ async def chat_migrated(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if chat.title:
             old_chat.title = chat.title
         session.commit()
+
     logger.info("Chat migrated %s -> %s", old_id, new_id)
+    try:
+        await context.bot.send_message(chat_id=new_id, text=UPGRADED_TEXT)
+    except Exception:
+        logger.exception("Failed to post upgrade message for chat %s", new_id)

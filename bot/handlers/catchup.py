@@ -18,6 +18,7 @@ from bot.db import (
     get_or_create_user,
 )
 from bot.handlers.ask import render_answer
+from bot.handlers.onboarding import take_link_tip
 from bot.llm import catchup_summary
 from bot.models import Chat, ChatMember, Decision, Message, User
 from bot.timeutil import format_absolute, format_compact, now_utc
@@ -279,15 +280,18 @@ async def catchup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             window_start = now - DEFAULT_WINDOW
         can_dm = db_user.can_dm
+        chat_db_id = db_chat.id
         count, context_text, sources = _build_context(
             session, db_chat.id, window_start
         )
         session.commit()
 
     in_group = here or not can_dm
+    tip = take_link_tip(chat_db_id, chat.type) if in_group else None
 
     if count < MIN_MESSAGES:
-        await _deliver(update, context, EMPTY, in_group=in_group)
+        text = f"{EMPTY}\n\n{tip}" if tip else EMPTY
+        await _deliver(update, context, text, in_group=in_group)
         _mark_catchup(chat.id, user.id, now)
         return
 
@@ -304,5 +308,8 @@ async def catchup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await message.reply_text(FAILED)
         return
 
-    await _deliver(update, context, "\n".join(bullets), in_group=in_group)
+    text = "\n".join(bullets)
+    if tip:
+        text = f"{text}\n\n{tip}"
+    await _deliver(update, context, text, in_group=in_group)
     _mark_catchup(chat.id, user.id, now)

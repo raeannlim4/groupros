@@ -27,6 +27,12 @@ def init_db() -> None:
                 "VARCHAR(16) NOT NULL DEFAULT 'ai'"
             )
         )
+        conn.execute(
+            text(
+                "ALTER TABLE chat ADD COLUMN IF NOT EXISTS link_tip_at "
+                "TIMESTAMPTZ"
+            )
+        )
         for table in Base.metadata.sorted_tables:
             conn.execute(
                 text(f'ALTER TABLE "{table.name}" ENABLE ROW LEVEL SECURITY')

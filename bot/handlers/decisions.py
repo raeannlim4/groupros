@@ -10,6 +10,7 @@ from telegram.ext import ContextTypes
 
 from bot import links
 from bot.db import SessionLocal, get_or_create_chat, get_or_create_user
+from bot.handlers.onboarding import take_link_tip
 from bot.models import Chat, Decision, User
 from bot.timeutil import format_absolute
 
@@ -134,6 +135,9 @@ async def decisions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         chat_db_id = db_chat.id
 
     text, keyboard = build_decisions(chat_db_id)
+    tip = take_link_tip(chat_db_id, chat.type)
+    if tip:
+        text = f"{text}\n\n{tip}"
     await message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
