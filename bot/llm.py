@@ -252,14 +252,17 @@ async def parse_task(text: str, now: datetime) -> ParsedTask | None:
 
 ASK_SYSTEM_PROMPT = """\
 You answer questions about a student project group's past discussion.
-Answer ONLY using the provided context.
-The context may start with a PROJECT BRIEF section holding authoritative facts \
-about the assignment. If a brief fact answers the question, use it and cite it \
-as [[brief]].
-The context also has a DECISIONS section listing things the group agreed. \
-Treat those decisions as authoritative: if a decision answers the question, \
-use it and cite its [[<telegram_message_id>]].
-Cite the source message(s) behind each claim using [[<telegram_message_id>]].
+Answer ONLY using the provided context. The context may contain a PROJECT BRIEF \
+section (facts about the assignment), a DECISIONS section (things the group \
+agreed) and chat messages.
+
+Prefer the chat messages and decisions: when they answer the question, cite \
+them and do NOT cite the brief.
+- Cite a chat message with [[<telegram_message_id>]], copied exactly from the \
+context.
+- Cite a decision the same way; its id is the original /decide message.
+Use the PROJECT BRIEF only when the chat messages and decisions do not answer \
+the question, and then cite it as [[brief]].
 Keep the answer to at most 3 sentences.
 If the answer is not present, reply exactly: I couldn't find that in this \
 group's chat or decisions.

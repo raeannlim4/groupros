@@ -198,6 +198,7 @@ async def answer_for_chat(
     logger.debug("ASK context for chat %s:\n%s", chat_db_id, context_text)
 
     answer = await answer_question(question, context_text)
+    logger.debug("ASK raw answer for chat %s: %r", chat_db_id, answer)
     answered = time.perf_counter()
     logger.info(
         "ask: embed %.2fs, retrieve %.2fs, llm %.2fs, total %.2fs",

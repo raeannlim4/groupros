@@ -185,11 +185,9 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 - `job_queue.run_repeating(..., interval=60)`: find reminders with `remind_at <= now`, `sent_at IS NULL`, task `open`. DM the owner: `⏰ [<group title>] "<task>" is due <relative time>.` (group title from the task's chat) with `[👍 On track] [⏰ Need more time]`. Set `sent_at`.
 - DM fails with `telegram.error.Forbidden` → set `can_dm=False`, mark reminder sent; if `nudged_for_dm` is False, post once in the group: `@<name>, tap below to get private deadline reminders` with the enable button, then set `nudged_for_dm=True`. Never mention the task in the group.
 - **On track** → edit to "Great, good luck!"
-- **Need more time** → show `[+1 day] [+2 days] [+1 week]` and `[📅 Pick a day]`.
-  - **Pick a day** shows the next 7 days as buttons labelled like `Fri 9 Oct` (2 per row), plus `[← Back]`. Choosing a day sets the deadline to 11:59pm that day in `DEFAULT_TZ`.
-  - Options whose new deadline would not be later than the current deadline are hidden/skipped.
+- **Need more time** → show `[+1 day] [+2 days] [+1 week]`. Options whose new deadline would not be later than the current deadline are hidden/skipped.
   - After choosing, delete unsent reminders, create new ones, then ask `Tell <group title> about the new deadline? [Yes] [Keep private]`. If yes, post neutrally to the task's own group: `🗓 Updated: "<task>" is now due <date>.`
-  - Callback data stays under 64 bytes, e.g. the picked day is `rem_day:<task_id>:<YYYY-MM-DD>`.
+  - Callback data stays under 64 bytes.
 
 ### 7.6 RAG ingestion (`rag/chunker.py`)
 - Repeating job every 120 seconds. For each chat, take messages with `chunked=False` in order.
@@ -199,9 +197,9 @@ All datetimes are **timezone-aware UTC**. Convert to `DEFAULT_TZ` only for displ
 - This also backfills: any stored messages not yet chunked get processed, including ones stored before this feature existed.
 
 ### 7.7 Ask
-- `/ask <question>` in a group. Embed the question, retrieve the top 6 chunks for **that chat only** by cosine distance. Also include all Decisions from that chat (most recent 20).
-- Call `llm.answer_question()`. System prompt: answer **only** from the provided context; if not found, say so; cite with `[[<telegram_message_id>]]`; max 3 sentences.
-- Post-process: replace each `[[id]]` via `links.message_link(chat_id, id)`. **Drop any cited id that wasn't in the retrieved context.**
+- `/ask <question>` in a group. Embed the question, retrieve the top 6 chunks for **that chat only** by cosine distance. Also include all Decisions from that chat (most recent 20), and the saved brief (if any) as a labelled "PROJECT BRIEF" section.
+- Call `llm.answer_question()`. System prompt: answer **only** from the provided context; **prefer chat messages and decisions over the brief when they answer the question**; if not found, say so; cite chat messages and decisions with `[[<telegram_message_id>]]` and the brief with `[[brief]]`; max 3 sentences. Log the raw model output at DEBUG.
+- Post-process: replace each `[[id]]` via `links.message_link(chat_id, id)`, and `[[brief]]` with "(from brief)". **Drop any cited id that wasn't in the retrieved context.**
 - `links.message_link`: only for supergroups (chat id starts with `-100`): `https://t.me/c/<id without -100>/<message_id>`. Otherwise return None and show the date instead.
 - HTML parse mode, escape user text.
 

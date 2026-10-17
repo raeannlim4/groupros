@@ -133,7 +133,7 @@ def main() -> None:
     application.add_handler(
         CallbackQueryHandler(
             reminders.handle_reminder_callback,
-            pattern=r"^(rem_ontrack|rem_more|rem_pick|rem_day|rem_plus1|rem_plus2|rem_plus7|rem_tell_yes|rem_tell_no):",
+            pattern=r"^(rem_ontrack|rem_more|rem_plus1|rem_plus2|rem_plus7|rem_tell_yes|rem_tell_no):",
         )
     )
     application.add_handler(

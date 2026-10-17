@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import html
 import logging
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import select
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -12,13 +12,7 @@ from telegram.ext import ContextTypes
 
 from bot.db import SessionLocal
 from bot.models import Chat, ChatMember, Reminder, Task, User
-from bot.timeutil import (
-    format_absolute,
-    format_relative,
-    get_tz,
-    now_utc,
-    to_local,
-)
+from bot.timeutil import format_absolute, format_relative, now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -167,37 +161,6 @@ async def _send_dm_nudge(context, session, owner, chat) -> None:
         logger.exception("Failed to post DM nudge for chat %s", chat.telegram_chat_id)
 
 
-def _day_label(day) -> str:
-    return f"{day.strftime('%a')} {day.day} {day.strftime('%b')}"
-
-
-def _day_picker_rows(task_id: int, current_due):
-    today = to_local(now_utc()).date()
-    tz = get_tz()
-    rows: list[list[InlineKeyboardButton]] = []
-    row: list[InlineKeyboardButton] = []
-    for offset in range(1, 8):
-        day = today + timedelta(days=offset)
-        deadline = datetime(day.year, day.month, day.day, 23, 59, tzinfo=tz)
-        if current_due is not None and deadline <= current_due:
-            continue
-        row.append(
-            InlineKeyboardButton(
-                _day_label(day),
-                callback_data=f"rem_day:{task_id}:{day.isoformat()}",
-            )
-        )
-        if len(row) == 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    rows.append(
-        [InlineKeyboardButton("← Back", callback_data=f"rem_more:{task_id}")]
-    )
-    return rows
-
-
 async def _apply_new_deadline(query, task_id: int, new_due) -> None:
     with SessionLocal() as session:
         task = session.get(Task, task_id)
@@ -275,11 +238,6 @@ async def handle_reminder_callback(
                         "+1 week", callback_data=f"rem_plus7:{task_id}"
                     ),
                 ],
-                [
-                    InlineKeyboardButton(
-                        "📅 Pick a day", callback_data=f"rem_pick:{task_id}"
-                    )
-                ],
             ]
         )
         await query.edit_message_text(
@@ -288,38 +246,6 @@ async def handle_reminder_callback(
             parse_mode=ParseMode.HTML,
         )
         await query.answer()
-        return
-
-    if action == "rem_pick":
-        with SessionLocal() as session:
-            task = session.get(Task, task_id)
-            if task is None:
-                await query.answer("This task no longer exists.")
-                return
-            title = task.title
-            current_due = task.due_at
-        await query.edit_message_text(
-            f'📅 Pick a day for "{_escape(title)}":',
-            reply_markup=InlineKeyboardMarkup(
-                _day_picker_rows(task_id, current_due)
-            ),
-            parse_mode=ParseMode.HTML,
-        )
-        await query.answer()
-        return
-
-    if action == "rem_day":
-        if len(parts) < 3:
-            await query.answer()
-            return
-        try:
-            day = date.fromisoformat(parts[2])
-        except ValueError:
-            await query.answer()
-            return
-        tz = get_tz()
-        new_due = datetime(day.year, day.month, day.day, 23, 59, tzinfo=tz)
-        await _apply_new_deadline(query, task_id, new_due)
         return
 
     if action in ("rem_plus1", "rem_plus2", "rem_plus7"):
