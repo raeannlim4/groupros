@@ -99,6 +99,10 @@ class MeetingTimeoutError(Exception):
     """The model took too long to summarise the transcript."""
 
 
+class MeetingTooDetailedError(Exception):
+    """The transcript's summary was cut off even after a compact retry."""
+
+
 def _is_context_length_error(exc: Exception) -> bool:
     text = str(exc).lower()
     return any(
@@ -124,7 +128,10 @@ def _extra_body() -> dict:
     return body
 
 
-async def _chat(model: str, messages: list[dict], max_tokens: int) -> str:
+async def _chat_raw(
+    model: str, messages: list[dict], max_tokens: int
+) -> tuple[str, str | None]:
+    """Like ``_chat`` but also returns the choice's ``finish_reason``."""
     extra = _extra_body()
     try:
         response = await _client.chat.completions.create(
@@ -146,7 +153,13 @@ async def _chat(model: str, messages: list[dict], max_tokens: int) -> str:
             temperature=0,
             max_tokens=max_tokens,
         )
-    return response.choices[0].message.content or ""
+    choice = response.choices[0]
+    return choice.message.content or "", choice.finish_reason
+
+
+async def _chat(model: str, messages: list[dict], max_tokens: int) -> str:
+    content, _finish = await _chat_raw(model, messages, max_tokens)
+    return content
 
 
 async def classify_commitment(
@@ -345,6 +358,19 @@ that day. A deadline more than 120 days after the meeting date is null.
 - Every "timestamp" must be copied exactly from the transcript. Never invent one.
 """
 
+MEETING_COMPACT_SYSTEM_PROMPT = """\
+You summarise a meeting transcript. Return ONLY the decisions and action items.
+Return JSON only, no prose and no code fences, in exactly this shape:
+{"decisions": [{"text": "Use Google Forms for the survey", "timestamp": "03:12", "speaker": "Raeann Lim"}], "action_items": [{"owner_name": "Tan Wei", "task": "draft the survey questions", "due": "2026-10-11T23:59:00+08:00", "timestamp": "05:40"}]}
+
+Rules:
+- Include only "decisions" and "action_items". Do not include the title, duration, attendees, topics or open questions.
+- "decisions" are things the group agreed; "text" is one short sentence.
+- "action_items" are tasks someone agreed to do; "task" is a short title.
+- "timestamp" MUST be copied exactly from a "[...]" in the transcript. Never invent one.
+- "due" is an ISO 8601 datetime with the local UTC offset, or null.
+"""
+
 
 class MeetingDecision(BaseModel):
     text: str = ""
@@ -419,14 +445,26 @@ async def summarize_meeting(
         f"Transcript:\n{transcript}"
     )
     try:
-        raw = await _chat(
+        raw, finish = await _chat_raw(
             config.ASK_MODEL,
             [
                 {"role": "system", "content": MEETING_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            config.ASK_MAX_TOKENS,
+            config.BRIEF_MAX_TOKENS,
         )
+        if finish == "length":
+            logger.warning("Meeting summary hit the token limit; retrying compact")
+            raw, finish = await _chat_raw(
+                config.ASK_MODEL,
+                [
+                    {"role": "system", "content": MEETING_COMPACT_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                config.BRIEF_MAX_TOKENS,
+            )
+        if finish == "length":
+            raise MeetingTooDetailedError()
     except openai.APITimeoutError as exc:
         raise MeetingTimeoutError() from exc
     except openai.BadRequestError as exc:
@@ -447,6 +485,10 @@ class BriefTimeoutError(Exception):
     """The model took too long to read the assignment brief."""
 
 
+class BriefTooDetailedError(Exception):
+    """The brief's JSON was cut off even after a compact retry."""
+
+
 BRIEF_SYSTEM_PROMPT = """\
 You read an assignment brief for a student project group and extract its key facts.
 
@@ -462,6 +504,20 @@ Rules:
 - Deadlines are ONLY dates by which something must be submitted or presented. Exclude advice ("start 3 weeks before the deadline"), post-project housekeeping ("after Week 18"), and teaching-team activities ("in Week 5 or 6 we will demo"). Do not create milestones for those.
 - "due_date" MUST be null when the document gives a relative or teaching-week date (such as "Week 11") instead of a calendar date. Never guess a date.
 - "quote" MUST be copied exactly from the document so it can be found there. If a milestone or fact is not in the document, leave it out.
+- Cap each "quote" at 25 words: the shortest exact phrase that proves the fact.
+- Return at most 8 milestones, and at most 6 deliverables per milestone.
+"""
+
+BRIEF_COMPACT_SYSTEM_PROMPT = """\
+You read an assignment brief and extract ONLY its milestones.
+Return JSON only, no prose and no code fences, in exactly this shape:
+{"milestones": [{"name": "Proposal", "due_text": "Week 8", "due_date": null, "deliverables": [{"value": "One-page proposal", "quote": "Proposal due Week 8."}], "quote": "Proposal due Week 8."}]}
+
+Rules:
+- Include only "milestones": their name, dates and deliverables. Do not include word_limit, group_size or weighting.
+- At most 8 milestones, and at most 6 deliverables per milestone.
+- "due_date" is an ISO 8601 datetime with the local UTC offset, or null when the document gives a relative or teaching-week date.
+- Each "quote" is the shortest exact phrase that proves the fact, copied exactly from the document, at most 25 words.
 """
 
 
@@ -471,14 +527,26 @@ async def extract_brief(text: str, document_date: datetime) -> BriefFacts:
         f"Document:\n{text}"
     )
     try:
-        raw = await _chat(
+        raw, finish = await _chat_raw(
             config.ASK_MODEL,
             [
                 {"role": "system", "content": BRIEF_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            config.ASK_MAX_TOKENS,
+            config.BRIEF_MAX_TOKENS,
         )
+        if finish == "length":
+            logger.warning("Brief extraction hit the token limit; retrying compact")
+            raw, finish = await _chat_raw(
+                config.ASK_MODEL,
+                [
+                    {"role": "system", "content": BRIEF_COMPACT_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                config.BRIEF_MAX_TOKENS,
+            )
+        if finish == "length":
+            raise BriefTooDetailedError()
     except openai.APITimeoutError as exc:
         raise BriefTimeoutError() from exc
     except openai.BadRequestError as exc:

@@ -70,6 +70,17 @@ def _extract_pdf(data: bytes) -> str:
     return text
 
 
+def _content_lines(container) -> list[str]:
+    """Paragraph and table text from a document body, header or footer."""
+    lines = [paragraph.text for paragraph in container.paragraphs]
+    for table in container.tables:
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells]
+            if any(cells):
+                lines.append(" | ".join(cells))
+    return lines
+
+
 def _extract_docx(data: bytes) -> str:
     from docx import Document as DocxDocument
 
@@ -79,12 +90,15 @@ def _extract_docx(data: bytes) -> str:
         raise
     except Exception as exc:
         raise DocumentError(UNREADABLE) from exc
-    parts = [paragraph.text for paragraph in document.paragraphs]
-    for table in document.tables:
-        for row in table.rows:
-            cells = [cell.text.strip() for cell in row.cells]
-            if any(cells):
-                parts.append(" | ".join(cells))
+
+    parts: list[str] = []
+    for section in document.sections:
+        if not section.header.is_linked_to_previous:
+            parts.extend(_content_lines(section.header))
+    parts.extend(_content_lines(document))
+    for section in document.sections:
+        if not section.footer.is_linked_to_previous:
+            parts.extend(_content_lines(section.footer))
     return _normalise("\n".join(parts))
 
 

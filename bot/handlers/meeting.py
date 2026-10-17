@@ -26,6 +26,7 @@ from bot.llm import (
     MeetingDecision,
     MeetingSummary,
     MeetingTimeoutError,
+    MeetingTooDetailedError,
     MeetingTooLongError,
     summarize_meeting,
 )
@@ -56,6 +57,10 @@ DECODE_ERROR = (
 TIMEOUT = (
     "Summarising took too long. Try again, or split the transcript into "
     "smaller parts."
+)
+TOO_DETAILED = (
+    "This transcript is too detailed for me to summarise in one go. Try sending "
+    "just one part of the meeting."
 )
 MAX_FILE_BYTES = 1_000_000
 
@@ -355,6 +360,9 @@ async def meeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     except MeetingTimeoutError:
         await message.reply_text(TIMEOUT)
+        return
+    except MeetingTooDetailedError:
+        await message.reply_text(TOO_DETAILED)
         return
     except Exception:
         logger.exception("Meeting summary failed for chat %s", chat.id)

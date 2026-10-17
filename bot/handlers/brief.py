@@ -25,6 +25,7 @@ from bot.db import SessionLocal, get_or_create_chat, get_or_create_user
 from bot.files import FileDownloadError, download_file
 from bot.llm import (
     BriefTimeoutError,
+    BriefTooDetailedError,
     BriefTooLongError,
     extract_brief,
     parse_task,
@@ -48,6 +49,10 @@ SET_USAGE = (
 PRIVATE = "Use /brief in a group chat."
 FAILED = "Sorry, something went wrong, try again."
 TIMEOUT = "Reading the brief took too long. Try again, or send a smaller file."
+TOO_DETAILED = (
+    "This brief is too detailed for me to read in one go. Try sending just the "
+    "section with the deadlines and deliverables."
+)
 
 
 def _name(user: User | None) -> str:
@@ -263,6 +268,9 @@ async def brief(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     except BriefTimeoutError:
         await message.reply_text(TIMEOUT)
+        return
+    except BriefTooDetailedError:
+        await message.reply_text(TOO_DETAILED)
         return
     except Exception:
         logger.exception("Brief extraction failed for chat %s", chat.id)
