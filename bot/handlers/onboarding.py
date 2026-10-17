@@ -30,7 +30,10 @@ HELP_TEXT = (
     "/brief – read the assignment brief and save its key facts\n"
     "/plan – turn the brief's deadline into milestones\n"
     "/forget – delete your data\n"
-    "/help – show this message"
+    "/help – show this message\n"
+    "\n"
+    "I store group text messages, tasks and decisions. Messages, transcripts "
+    "and briefs are processed by AI providers; /forget deletes your messages."
 )
 
 INTRO_TEXT = (
@@ -39,9 +42,9 @@ INTRO_TEXT = (
     "task. You can see the board any time with /tasks, get private deadline "
     "reminders by DM, and log decisions with /decide.\n\n"
     "I store group text messages, tasks and decisions. Messages are processed "
-    "by AI providers so I can do this. Transcripts you send with /meeting are "
-    "processed by AI; only the summary is stored. Anyone can delete their data "
-    "anytime with /forget."
+    "by AI providers so I can do this. Transcripts sent with /meeting and briefs "
+    "sent with /brief are processed by AI; I keep only the summary or the key "
+    "facts. Anyone can delete their data anytime with /forget."
 )
 
 

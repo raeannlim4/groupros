@@ -170,7 +170,7 @@ async def classify_commitment(
         commitment.due = _sane_due(commitment.due, now)
         return commitment
     except Exception:
-        logger.exception("classify_commitment failed for message: %r", text)
+        logger.exception("classify_commitment failed (message length %d)", len(text))
         return None
 
 
@@ -233,7 +233,7 @@ async def parse_task(text: str, now: datetime) -> ParsedTask | None:
         parsed.due = _sane_due(parsed.due, now)
         return parsed
     except Exception:
-        logger.exception("parse_task failed for message: %r", text)
+        logger.exception("parse_task failed (message length %d)", len(text))
         return None
 
 
