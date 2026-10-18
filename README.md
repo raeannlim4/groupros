@@ -95,7 +95,8 @@ the Railway dashboard in production). `.env.example` lists every one.
 | `LLM_REASONING` | no | `off` disables the model's reasoning/thinking. Default `off`. |
 | `LLM_PROVIDER_SORT` | no | OpenRouter provider routing, e.g. `throughput`. Default `throughput`. |
 | `CAPTURE_MAX_TOKENS` | no | Response cap for capture calls. Default `200`. |
-| `ASK_MAX_TOKENS` | no | Response cap for `/ask` and other large calls. Default `600`. |
+| `ASK_MAX_TOKENS` | no | Response cap for `/ask`, `/catchup` and `/plan`. Default `600`. |
+| `BRIEF_MAX_TOKENS` | no | Output cap for `/brief` and `/meeting`. Default `4000`. |
 | `EMBEDDING_BASE_URL` | yes | Base URL of an OpenAI-compatible embeddings API. |
 | `EMBEDDING_API_KEY` | yes | API key for the embeddings provider. |
 | `EMBEDDING_MODEL` | yes | Embedding model name. |
@@ -133,17 +134,19 @@ the Railway dashboard in production). `.env.example` lists every one.
 python -m unittest discover -s tests
 ```
 
-Covers time conversion and display, link building, VTT cleaning, brief grounding and
-RAG chat-scoping.
+Covers citation rendering and link building, VTT cleaning, brief grounding and plan
+filtering, and RAG chat-scoping.
 
 ## Known issues
 
 - **Button state is in memory.** Plan, meeting and brief confirmations live in the
   process. After a restart or redeploy, old buttons reply that the action expired and
   ask you to run the command again.
-- **Schema changes are not migrated.** Tables are created with `metadata.create_all`,
-  which creates missing tables but does not add columns to existing tables. Any future
-  column must be added to the database by hand (no Alembic by design).
+- **Schema changes are not auto-migrated.** `metadata.create_all` creates missing
+  tables but will not add columns to existing ones. Columns added after the first
+  deploy (e.g. `task.source`, `chat.link_tip_at`) use explicit
+  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements in `init_db`; add any future
+  column there too (no Alembic by design).
 - **`EMBEDDING_DIM` changes invalidate embeddings.** If you change the embedding model
   or its dimension, drop the `messagechunk` table and set `chunked = false` on all
   messages so they are re-embedded.
