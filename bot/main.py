@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
+from aiohttp import web as aio_web
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -37,12 +39,50 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
+WEB_INDEX = Path(__file__).parent / "web" / "index.html"
+
+
+async def _serve_index(request: aio_web.Request) -> aio_web.Response:
+    page = WEB_INDEX.read_text(encoding="utf-8").replace(
+        "__BOT_USERNAME__", request.app["bot_username"]
+    )
+    return aio_web.Response(text=page, content_type="text/html")
+
+
+async def _serve_health(request: aio_web.Request) -> aio_web.Response:
+    return aio_web.Response(text="ok")
+
+
+async def start_web_server(
+    application: Application, bot_username: str
+) -> None:
+    """Start the landing page on Railway's PORT, alongside long polling."""
+    if config.PORT is None:
+        return
+    web_app = aio_web.Application()
+    web_app["bot_username"] = bot_username
+    web_app.router.add_get("/", _serve_index)
+    web_app.router.add_get("/health", _serve_health)
+    runner = aio_web.AppRunner(web_app, shutdown_timeout=5.0)
+    await runner.setup()
+    site = aio_web.TCPSite(runner, "0.0.0.0", config.PORT)
+    await site.start()
+    application.bot_data["web_runner"] = runner
+    logger.info("Landing page listening on 0.0.0.0:%s", config.PORT)
+
+
+async def stop_web_server(application: Application) -> None:
+    runner = application.bot_data.pop("web_runner", None)
+    if runner is not None:
+        await runner.cleanup()
+
 
 async def post_init(application: Application) -> None:
     init_db()
     reminders.backfill_reminders()
     me = await application.bot.get_me()
     logger.info("Polling as @%s", me.username)
+    await start_web_server(application, me.username or "")
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -59,6 +99,7 @@ def main() -> None:
         .connect_timeout(30)
         .read_timeout(30)
         .post_init(post_init)
+        .post_stop(stop_web_server)
         .build()
     )
     application.add_handler(CommandHandler("start", onboarding.start))

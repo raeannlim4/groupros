@@ -102,6 +102,7 @@ the Railway dashboard in production). `.env.example` lists every one.
 | `EMBEDDING_DIM` | yes | Output size of the embedding model; must match the model. |
 | `DEFAULT_TZ` | no | Timezone for display. Default `Asia/Singapore`. |
 | `ASK_MAX_DISTANCE` | no | Cosine-distance cutoff below which `/ask` skips the LLM. Default `0.6`. |
+| `PORT` | no | Railway sets this. When set, the same process serves the landing page on `0.0.0.0:$PORT` (`/` and `/health`). Leave blank locally. |
 | `PRIVACY_URL` | no | If set, the intro message shows a "Privacy info" button. |
 | `LOG_LEVEL` | no | Python log level. Default `INFO`. Keep it at `INFO` in production. |
 
@@ -116,11 +117,15 @@ the Railway dashboard in production). `.env.example` lists every one.
    ```
 
    Railway reads `.python-version` (Python 3.13) and `requirements.txt` automatically.
-4. **Only one instance may poll at a time.** Long polling does not allow two
+4. Railway sets `PORT` for you. When `PORT` is set, the same process also serves the
+   public landing page on `0.0.0.0:$PORT` — `GET /` is the page and `GET /health`
+   returns `ok` — while Telegram long polling and the job queues keep running in the
+   same event loop. Locally `PORT` is unset, so no web server starts.
+5. **Only one instance may poll at a time.** Long polling does not allow two
    connections on the same token. Before deploying, stop your local bot, or run the
    local one with a separate dev bot token. If you scale to more than one replica,
    exactly one must poll.
-5. The database tables are created on startup. The `vector` extension is created first.
+6. The database tables are created on startup. The `vector` extension is created first.
 
 ## Tests
 

@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Groupros turns chat commitments into tracked tasks, sends private reminders, and answers questions about what the group decided.">
+  <title>Groupros</title>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --panel: rgba(30, 41, 59, 0.62);
+      --border: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-strong: #0ea5e9;
+      --button-text: #06202f;
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 50% 0%, #1e293b 0%, var(--bg) 62%);
+      min-height: 100vh;
+    }
+    main {
+      width: 100%;
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 48px 20px 64px;
+    }
+    header { text-align: center; }
+    .logo {
+      margin: 0;
+      font-size: clamp(2.5rem, 9vw, 3.8rem);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+    }
+    .logo em { color: var(--accent); font-style: normal; }
+    .tagline {
+      max-width: 620px;
+      margin: 16px auto 0;
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+    .cta {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      margin-top: 28px;
+    }
+    .button {
+      display: inline-block;
+      padding: 14px 28px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: var(--button-text);
+      font-weight: 700;
+      text-decoration: none;
+      box-shadow: 0 12px 34px rgba(56, 189, 248, 0.26);
+      transition: transform 0.12s ease, background 0.12s ease;
+    }
+    .button:hover { background: var(--accent-strong); transform: translateY(-1px); }
+    .button:active { transform: translateY(0); }
+    .secondary {
+      color: var(--accent);
+      font-weight: 600;
+      text-decoration: none;
+      padding: 4px;
+    }
+    .secondary:hover { text-decoration: underline; }
+    section {
+      margin-top: 24px;
+      padding: 24px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: var(--panel);
+    }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 1.22rem;
+      letter-spacing: -0.01em;
+    }
+    ul { margin: 0; padding-left: 20px; }
+    li { margin: 8px 0; color: var(--muted); }
+    li strong { color: var(--text); }
+    .rule {
+      text-align: center;
+      font-size: 1.12rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .privacy p { margin: 9px 0; color: var(--muted); }
+    footer {
+      margin-top: 34px;
+      text-align: center;
+      font-size: 0.84rem;
+      color: #64748b;
+    }
+    @media (max-width: 480px) {
+      main { padding: 32px 16px 48px; }
+      section { padding: 18px; }
+      .button { width: 100%; text-align: center; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1 class="logo">Group<em>ros</em></h1>
+      <p class="tagline">Group projects fail when things get lost in the chat. Groupros turns "I'll do it" into tracked tasks, sends private reminders, and answers "what did we decide?" with proof.</p>
+      <div class="cta">
+        <a class="button" href="https://t.me/__BOT_USERNAME__?startgroup=true">Add Groupros to your group</a>
+        <a class="secondary" href="https://t.me/__BOT_USERNAME__">Open in Telegram</a>
+      </div>
+    </header>
+
+    <section>
+      <h2>What it does</h2>
+      <ul>
+        <li><strong>Automatic task capture</strong> with confirmation — it asks before adding anything.</li>
+        <li><strong>Private reminders</strong> the day before and 3 hours before, with extensions.</li>
+        <li><strong>/brief and /plan</strong> — save the assignment brief and turn its deadline into milestones.</li>
+        <li><strong>/tasks, /addtask and /mytasks</strong> — the board, manual tasks, and everything you own.</li>
+        <li><strong>/decide and /decisions</strong> — log what the group agreed and revisit it later.</li>
+        <li><strong>/ask</strong> — answers about past discussion, with links to the messages.</li>
+        <li><strong>/catchup</strong> — a private summary of what you missed.</li>
+        <li><strong>/meeting</strong> — turns a Zoom transcript into decisions and action items.</li>
+      </ul>
+    </section>
+
+    <section class="rule">Built on one rule: the AI suggests, humans decide.</section>
+
+    <section class="privacy" id="privacy">
+      <h2>Privacy</h2>
+      <p>The bot stores group text messages, tasks and decisions so it can work.</p>
+      <p>Messages are processed by AI providers via OpenRouter, which may be outside Singapore.</p>
+      <p>Transcripts and briefs are processed by AI, and only summaries or extracted facts are stored.</p>
+      <p>Anyone can delete their stored messages with /forget.</p>
+      <p>Questions? Contact the team.</p>
+    </section>
+
+    <footer>Groupros — a Telegram bot for student project groups.</footer>
+  </main>
+</body>
+</html>
